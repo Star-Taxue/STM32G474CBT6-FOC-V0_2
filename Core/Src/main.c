@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "hrtim.h"
 #include "spi.h"
 #include "usart.h"
 #include "gpio.h"
@@ -92,10 +93,19 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_SPI1_Init();
+  MX_HRTIM1_Init();
   /* USER CODE BEGIN 2 */
-  MX_SPI1_Init();
   printf("init start\r\n");
   mt6701_init();
+
+  HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER
+                                          | HRTIM_TIMERID_TIMER_A
+                                          | HRTIM_TIMERID_TIMER_B
+                                          | HRTIM_TIMERID_TIMER_D);
+  HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2
+                                       | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2
+                                       | HRTIM_OUTPUT_TD1 | HRTIM_OUTPUT_TD2);
+
   printf("init done\r\n");
 
 
@@ -109,8 +119,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     mt6701_data_t sensor = mt6701_read_angle();
-    printf("angle:%d.%02d,%d\n", (int)sensor.angle_deg, (int)((sensor.angle_deg - (int)sensor.angle_deg) * 100), sensor.status);
-    // HAL_Delay(100);
+    printf("raw:%d,angle:%d.%02d,sta:%d,crc:%d\n", sensor.raw_angle, (int)sensor.angle_deg, (int)((sensor.angle_deg - (int)sensor.angle_deg) * 100), sensor.status, sensor.crc);
+    HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
@@ -126,7 +136,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -137,7 +147,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
-  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLN = 75;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
   RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;

@@ -119,7 +119,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     mt6701_data_t sensor = mt6701_read_angle();
-    printf("raw:%d,angle:%d.%02d,sta:%d,crc:%d\n", sensor.raw_angle, (int)sensor.angle_deg, (int)((sensor.angle_deg - (int)sensor.angle_deg) * 100), sensor.status, sensor.crc);
+    printf("angle:%d.%02d, %d\n",(int)sensor.angle_deg, (int)((sensor.angle_deg - (int)sensor.angle_deg) * 100), sensor.status);
     HAL_Delay(10);
   }
   /* USER CODE END 3 */

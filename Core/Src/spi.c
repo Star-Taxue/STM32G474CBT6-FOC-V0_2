@@ -39,7 +39,7 @@ void MX_SPI1_Init(void)
   /* USER CODE END SPI1_Init 1 */
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
-  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES_RXONLY;
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
@@ -56,10 +56,7 @@ void MX_SPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
-  hspi1.Init.Direction = SPI_DIRECTION_2LINES_RXONLY;
-  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
-  HAL_SPI_Init(&hspi1);
-
+  /* MOSI (PA7) 在 RX-only 模式下不需要, 配置为带上拉的 GPIO 输入 */
   GPIO_InitTypeDef gpio = {0};
   gpio.Pin = GPIO_PIN_7;
   gpio.Mode = GPIO_MODE_INPUT;
@@ -85,9 +82,9 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     /**SPI1 GPIO Configuration
     PA5     ------> SPI1_SCK
     PA6     ------> SPI1_MISO
-    PA7     ------> SPI1_MOSI
+    PA7     ------> SPI1_MOSI (not used in RX-only mode)
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7;
+    GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -127,4 +124,3 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* spiHandle)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
-

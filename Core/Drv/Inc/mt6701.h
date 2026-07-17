@@ -3,15 +3,22 @@
 
 #include <stdint.h>
 
+/* MT6701 磁编码器数据结构 */
 typedef struct {
-    uint16_t raw_angle;
-    float angle_deg;
-    uint8_t status;
-    uint8_t crc;
-    uint8_t crc_valid;
+    uint16_t raw_angle;      /* 14位原始角度值 (0-16383)        */
+    float    angle_deg;      /* 转换后的角度 (0-360°)           */
+    uint8_t  status;         /* 4位状态标志                     */
+    uint8_t  crc;            /* 6位CRC校验值                    */
+    uint8_t  crc_valid;      /* CRC校验结果: 0=失败, 1=通过    */
 } mt6701_data_t;
+
+/**
+ * @brief  MT6701 CRC-6 多项式 (需对照数据手册确认)
+ * @note   常见多项式: 0x03 (x^6 + x + 1)
+ */
+#define MT6701_CRC6_POLY  0x03U
 
 void mt6701_init(void);
 mt6701_data_t mt6701_read_angle(void);
 
-#endif
+#endif /* __MT6701_H */

@@ -48,7 +48,8 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+static uint32_t last_sensor_tick = 0;  /* 上次传感器读取的 systick 值 */
+#define SENSOR_READ_INTERVAL_MS  10U    /* 传感器读取间隔 (ms)          */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -118,9 +119,24 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    mt6701_data_t sensor = mt6701_read_angle();
-    printf("angle:%d.%02d, %d\n",(int)sensor.angle_deg, (int)((sensor.angle_deg - (int)sensor.angle_deg) * 100), sensor.status);
-    HAL_Delay(10);
+    /* 非阻塞定时读取传感器 (基于 SysTick) */
+    uint32_t now = HAL_GetTick();
+    if ((now - last_sensor_tick) >= SENSOR_READ_INTERVAL_MS) {
+        last_sensor_tick = now;
+
+        mt6701_data_t sensor = mt6701_read_angle();
+
+        if (sensor.crc_valid) {
+            /* 注: 嵌入式 printf 通常不支持 %f, 手动拆分整数/小数部分 */
+            int deg_int = (int)sensor.angle_deg;
+            int deg_frac = (int)((sensor.angle_deg - (float)deg_int) * 100.0f + 0.5f);
+            printf("angle:%d.%02d deg, status:%d, crc:0x%02X\r\n",
+                   deg_int, deg_frac, sensor.status, sensor.crc);
+        } else {
+            printf("sensor read error (CRC mismatch)\r\n");
+        }
+    }
+    /* 这里可以添加其他非阻塞任务 */
   }
   /* USER CODE END 3 */
 }

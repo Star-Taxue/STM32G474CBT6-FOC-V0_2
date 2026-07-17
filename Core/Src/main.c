@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
+#include "dma.h"
 #include "hrtim.h"
 #include "spi.h"
 #include "usart.h"
@@ -37,7 +39,19 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* 电流采样参数 */
+#define ADC_VREF          3.3f      /* ADC 参考电压 (V)               */
+#define ADC_RESOLUTION    4096.0f   /* 12-bit 量程                    */
+#define SHUNT_RESISTANCE  0.002f    /* 采样电阻 2mΩ                    */
+#define OPAMP_GAIN        50.0f     /* 外部运放增益 100k/2k = 50 倍    */
 
+/* 三相电流零点校准值 (电机未通电时 ADC 实测均值反推, 后续精确校准后更新) */
+#define ADC_OFFSET_A      2041   /* Ia: 实测 ~2040.5 */
+#define ADC_OFFSET_B      2024   /* Ib: 实测 ~2024.4 */
+#define ADC_OFFSET_C      1990   /* Ic: 实测 ~1989.7 */
+
+/* 预计算: ADC每LSB对应电流 mA (带符号) */
+#define ADC_SCALE_MA_PER_LSB  ((ADC_VREF * 1000.0f) / (ADC_RESOLUTION * OPAMP_GAIN * SHUNT_RESISTANCE))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -50,6 +64,11 @@
 /* USER CODE BEGIN PV */
 static uint32_t last_sensor_tick = 0;  /* 上次传感器读取的 systick 值 */
 #define SENSOR_READ_INTERVAL_MS  10U    /* 传感器读取间隔 (ms)          */
+
+/* ADC DMA 循环缓冲: 3 相电流 Ia, Ib, Ic */
+static uint16_t adc_curr_buf[3] = {0};
+/* 各通道零点 ADC 值 (运行时可用) */
+static const uint16_t adc_offset[3] = {ADC_OFFSET_A, ADC_OFFSET_B, ADC_OFFSET_C};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,6 +79,28 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/**
+ * @brief  将 ADC 值转换为电流 (mA), 使用各通道独立零点校准
+ */
+static inline float adc_to_current_ma(uint16_t adc_val, uint8_t channel)
+{
+    int32_t delta = (int32_t)adc_val - (int32_t)adc_offset[channel];
+    return (float)delta * ADC_SCALE_MA_PER_LSB;
+}
+
+/**
+ * @brief  发送三相电流调试数据
+ * @note   格式: "I:ia,ib,ic\\r\\n"  mA×10 整数
+ */
+static void debug_print_currents(void)
+{
+    float ia = adc_to_current_ma(adc_curr_buf[0], 0);
+    float ib = adc_to_current_ma(adc_curr_buf[1], 1);
+    float ic = adc_to_current_ma(adc_curr_buf[2], 2);
+    printf("I:%d,%d,%d\r\n",
+           (int)(ia * 10.0f), (int)(ib * 10.0f), (int)(ic * 10.0f));
+}
 
 /* USER CODE END 0 */
 
@@ -92,12 +133,17 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_SPI1_Init();
   MX_HRTIM1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   printf("init start\r\n");
   mt6701_init();
+
+  /* 启动 ADC DMA 循环采样 (由 HRTIM ADC Trigger 1 触发) */
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_curr_buf, 3);
 
   HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER
                                           | HRTIM_TIMERID_TIMER_A
@@ -124,10 +170,9 @@ int main(void)
     if ((now - last_sensor_tick) >= SENSOR_READ_INTERVAL_MS) {
         last_sensor_tick = now;
 
+        /* 编码器角度 */
         mt6701_data_t sensor = mt6701_read_angle();
-
         if (sensor.crc_valid) {
-            /* 注: 嵌入式 printf 通常不支持 %f, 手动拆分整数/小数部分 */
             int deg_int = (int)sensor.angle_deg;
             int deg_frac = (int)((sensor.angle_deg - (float)deg_int) * 100.0f + 0.5f);
             printf("angle:%d.%02d deg, status:%d, crc:0x%02X\r\n",
@@ -135,6 +180,9 @@ int main(void)
         } else {
             printf("sensor read error (CRC mismatch)\r\n");
         }
+
+        /* 三相电流 (mA×10, 即小数点后1位) */
+        debug_print_currents();
     }
     /* 这里可以添加其他非阻塞任务 */
   }

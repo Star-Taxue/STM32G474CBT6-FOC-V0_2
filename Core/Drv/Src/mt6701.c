@@ -73,50 +73,57 @@ void mt6701_init(void)
 }
 
 /* -------------------------------------------------------------------------- */
-/*  读取角度数据                                                                */
+/*  读取角度数据 (带 CRC 失败重试)                                               */
 /* -------------------------------------------------------------------------- */
+#define MT6701_RETRY_MAX  3   /* CRC 失败重试次数 */
+
 mt6701_data_t mt6701_read_angle(void)
 {
     uint8_t  rx_buf[3] = {0};
     mt6701_data_t result;
+    static mt6701_data_t last_valid = {0};
     HAL_StatusTypeDef hal_ret;
 
-    /* --- 1. SPI 读取 3 字节 --- */
-    MT6701_CSN_LOW();
-    delay_us(2);   /* t_css 建立时间 */
-    hal_ret = HAL_SPI_Receive(&hspi1, rx_buf, 3, MT6701_SPI_TIMEOUT);
-    MT6701_CSN_HIGH();
+    for (int retry = 0; retry < MT6701_RETRY_MAX; retry++) {
 
-    /* --- 2. SPI 通信失败: 返回全零 + invalid --- */
-    if (hal_ret != HAL_OK) {
-        result.raw_angle = 0;
-        result.angle_deg = 0.0f;
-        result.status    = 0;
-        result.crc       = 0;
-        result.crc_valid = 0;
+        /* --- 1. SPI 读取 3 字节 --- */
+        MT6701_CSN_LOW();
+        delay_us(2);
+        hal_ret = HAL_SPI_Receive(&hspi1, rx_buf, 3, MT6701_SPI_TIMEOUT);
+        MT6701_CSN_HIGH();
+
+        if (hal_ret != HAL_OK) {
+            continue;  /* SPI 硬件错误, 重试 */
+        }
+
+        /* --- 2. 解析 24-bit 数据包 --- */
+        uint32_t raw = ((uint32_t)rx_buf[0] << 16)
+                     | ((uint32_t)rx_buf[1] << 8)
+                     | ((uint32_t)rx_buf[2]);
+
+        uint16_t angle    = (raw >> 10) & 0x3FFFU;
+        uint8_t  status   = (raw >> 6)  & 0x0FU;
+        uint8_t  crc_rcvd =  raw        & 0x3FU;
+
+        /* --- 3. CRC 校验 --- */
+        uint32_t crc_input = ((uint32_t)angle << 4) | status;
+        uint8_t  crc_calc  = mt6701_calc_crc6(crc_input);
+
+        if (crc_calc != crc_rcvd) {
+            continue;  /* CRC 不匹配, 重试 */
+        }
+
+        /* --- 4. 校验通过, 保存并返回 --- */
+        result.raw_angle = angle;
+        result.status    = status;
+        result.crc       = crc_rcvd;
+        result.crc_valid = 1U;
+        result.angle_deg = (float)angle * (360.0f / 16384.0f);
+        last_valid = result;
         return result;
     }
 
-    /* --- 3. 解析 24-bit 数据包 --- */
-    uint32_t raw = ((uint32_t)rx_buf[0] << 16)
-                 | ((uint32_t)rx_buf[1] << 8)
-                 | ((uint32_t)rx_buf[2]);
-
-    uint16_t angle    = (raw >> 10) & 0x3FFFU;  /* bit[23:10] → 14-bit */
-    uint8_t  status   = (raw >> 6)  & 0x0FU;    /* bit[9:6]   →  4-bit */
-    uint8_t  crc_rcvd =  raw        & 0x3FU;    /* bit[5:0]   →  6-bit */
-
-    /* --- 4. CRC 校验 --- */
-    /* 输入 CRC 计算器的 18-bit 数据: angle[13:0] | status[3:0] */
-    uint32_t crc_input = ((uint32_t)angle << 4) | status;
-    uint8_t  crc_calc  = mt6701_calc_crc6(crc_input);
-
-    /* --- 5. 填充结果 --- */
-    result.raw_angle = angle;
-    result.status    = status;
-    result.crc       = crc_rcvd;
-    result.crc_valid = (crc_calc == crc_rcvd) ? 1U : 0U;
-    result.angle_deg = (float)angle * (360.0f / 16384.0f);
-
-    return result;
+    /* 所有重试均失败, 返回上次有效值 + invalid 标记 */
+    last_valid.crc_valid = 0;
+    return last_valid;
 }

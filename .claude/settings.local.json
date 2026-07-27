@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 *)",
+      "Bash(sed -i '26d' Core/App/Src/app_foc.c)",
+      "Bash(sed -i 's/foc_update_speed.*/&\\\\n    float speed_delta = 0.0f;/' Core/App/Src/app_foc.c)",
+      "WebFetch(domain:docs.simplefoc.com)",
+      "Bash(cmake -B build/Debug -DCMAKE_BUILD_TYPE=Debug)"
+    ]
+  }
+}

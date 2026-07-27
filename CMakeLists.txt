@@ -46,6 +46,11 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # App layer
     Core/App/Src/app_uart.c
+    Core/App/Src/app_current_sense.c
+    Core/App/Src/app_openloop.c
+    Core/App/Src/app_serial.c
+    Core/App/Src/app_foc.c
+    Core/App/Src/svpwm.c
     # Drv layer
     Core/Drv/Src/mt6701.c
     # Bsp layer

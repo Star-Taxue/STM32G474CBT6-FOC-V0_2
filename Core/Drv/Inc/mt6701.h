@@ -12,9 +12,11 @@ typedef struct {
     uint8_t  crc_valid;      /* CRC校验结果: 0=失败, 1=通过    */
 } mt6701_data_t;
 
+/** MT6701 角度转换: 360° / 16384 = 0.02197265625 */
+#define MT6701_ANGLE_SCALE  0.02197265625f
+
 /**
- * @brief  MT6701 CRC-6 多项式 (需对照数据手册确认)
- * @note   常见多项式: 0x03 (x^6 + x + 1)
+ * @brief  MT6701 CRC-6 多项式 (x^6 + x + 1)
  */
 #define MT6701_CRC6_POLY  0x03U
 

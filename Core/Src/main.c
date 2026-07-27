@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "dma.h"
 #include "hrtim.h"
 #include "spi.h"
 #include "usart.h"
@@ -28,6 +27,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app_uart.h"
+#include "app_current_sense.h"
+#include "app_openloop.h"
+#include "app_foc.h"
+#include "app_serial.h"
 #include "mt6701.h"
 #include "stdio.h"
 /* USER CODE END Includes */
@@ -39,19 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* 电流采样参数 */
-#define ADC_VREF          3.3f      /* ADC 参考电压 (V)               */
-#define ADC_RESOLUTION    4096.0f   /* 12-bit 量程                    */
-#define SHUNT_RESISTANCE  0.002f    /* 采样电阻 2mΩ                    */
-#define OPAMP_GAIN        50.0f     /* 外部运放增益 100k/2k = 50 倍    */
 
-/* 三相电流零点校准值 (电机未通电时 ADC 实测均值反推, 后续精确校准后更新) */
-#define ADC_OFFSET_A      2041   /* Ia: 实测 ~2040.5 */
-#define ADC_OFFSET_B      2024   /* Ib: 实测 ~2024.4 */
-#define ADC_OFFSET_C      1990   /* Ic: 实测 ~1989.7 */
-
-/* 预计算: ADC每LSB对应电流 mA (带符号) */
-#define ADC_SCALE_MA_PER_LSB  ((ADC_VREF * 1000.0f) / (ADC_RESOLUTION * OPAMP_GAIN * SHUNT_RESISTANCE))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -62,13 +53,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static uint32_t last_sensor_tick = 0;  /* 上次传感器读取的 systick 值 */
-#define SENSOR_READ_INTERVAL_MS  10U    /* 传感器读取间隔 (ms)          */
-
-/* ADC DMA 循环缓冲: 3 相电流 Ia, Ib, Ic */
-static uint16_t adc_curr_buf[3] = {0};
-/* 各通道零点 ADC 值 (运行时可用) */
-static const uint16_t adc_offset[3] = {ADC_OFFSET_A, ADC_OFFSET_B, ADC_OFFSET_C};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -79,28 +63,6 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-/**
- * @brief  将 ADC 值转换为电流 (mA), 使用各通道独立零点校准
- */
-static inline float adc_to_current_ma(uint16_t adc_val, uint8_t channel)
-{
-    int32_t delta = (int32_t)adc_val - (int32_t)adc_offset[channel];
-    return (float)delta * ADC_SCALE_MA_PER_LSB;
-}
-
-/**
- * @brief  发送三相电流调试数据
- * @note   格式: "I:ia,ib,ic\\r\\n"  mA×10 整数
- */
-static void debug_print_currents(void)
-{
-    float ia = adc_to_current_ma(adc_curr_buf[0], 0);
-    float ib = adc_to_current_ma(adc_curr_buf[1], 1);
-    float ic = adc_to_current_ma(adc_curr_buf[2], 2);
-    printf("I:%d,%d,%d\r\n",
-           (int)(ia * 10.0f), (int)(ib * 10.0f), (int)(ic * 10.0f));
-}
 
 /* USER CODE END 0 */
 
@@ -133,7 +95,6 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_SPI1_Init();
   MX_HRTIM1_Init();
@@ -142,18 +103,46 @@ int main(void)
   printf("init start\r\n");
   mt6701_init();
 
-  /* 启动 ADC DMA 循环采样 (由 HRTIM ADC Trigger 1 触发) */
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_curr_buf, 3);
+  /* 启动 ADC1 注入组 (JEOC 中断), 由 HRTIM ADC_TRG2 触发 */
+  curr_sense_init();
 
+  /*
+   * 先启动 HRTIM 计数器产生 ADC 触发脉冲,
+   * 但不启动 PWM 输出 (电机无电流), 用于零点校准.
+   */
   HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER
                                           | HRTIM_TIMERID_TIMER_A
                                           | HRTIM_TIMERID_TIMER_B
                                           | HRTIM_TIMERID_TIMER_D);
+
+  /* 等待 ADC 稳定 + 注入组开始转换 */
+  HAL_Delay(100);
+
+  /* 零点校准: 采集 1024 次取平均 (电机必须静止) */
+  printf("calibrating ADC offset (1024 samples)...\r\n");
+  curr_sense_calibrate(1024);
+
+  uint16_t off_a, off_b, off_c;
+  curr_sense_get_offsets(&off_a, &off_b, &off_c);
+  printf("ADC offset: A=%u, B=%u, C=%u\r\n", off_a, off_b, off_c);
+
+  /* 启动 PWM 输出 */
   HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2
                                        | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2
                                        | HRTIM_OUTPUT_TD1 | HRTIM_OUTPUT_TD2);
 
-  printf("init done\r\n");
+  /* 初始化开环电压驱动 (默认不输出, 等待上位机命令) */
+  openloop_init();
+  openloop_set_freq(10.0f);
+  openloop_set_voltage(0.0f);   /* K=0, 无输出 */
+
+  /* 初始化闭环 FOC (默认 idle, 从 openloop 读取 encoder offset) */
+  foc_init();
+
+  /* 初始化串口命令解析 (启动 UART RX 中断) */
+  serial_init();
+
+  printf("init done. type ? for help\r\n");
 
 
   /* USER CODE END 2 */
@@ -165,27 +154,33 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* 非阻塞定时读取传感器 (基于 SysTick) */
-    uint32_t now = HAL_GetTick();
-    if ((now - last_sensor_tick) >= SENSOR_READ_INTERVAL_MS) {
-        last_sensor_tick = now;
-
-        /* 编码器角度 */
-        mt6701_data_t sensor = mt6701_read_angle();
-        if (sensor.crc_valid) {
-            int deg_int = (int)sensor.angle_deg;
-            int deg_frac = (int)((sensor.angle_deg - (float)deg_int) * 100.0f + 0.5f);
-            printf("angle:%d.%02d deg, status:%d, crc:0x%02X\r\n",
-                   deg_int, deg_frac, sensor.status, sensor.crc);
+    /*
+     * 快速控制环: ADC 每次扫描完成 (20kHz) 时运行.
+     * FOC 闭环与开环互斥调度.
+     *
+     * 注意: foc_step() 内部通过 curr_sense_get_all() 清除 new_data_flag,
+     * 但 openloop_step() 不读电流, 因此必须在这里原子读取并清除标志,
+     * 防止 openloop_step() 以 CPU 速度失控运行.
+     */
+    if (curr_sense_data_ready()) {
+        if (foc_is_enabled()) {
+            foc_step();
         } else {
-            printf("sensor read error (CRC mismatch)\r\n");
+            /* 原子清除 data_ready 标志, 让 openloop_step() 严格按 20kHz 运行 */
+            __disable_irq();
+            new_data_flag_clear();
+            __enable_irq();
+            openloop_step();
         }
-
-        /* 三相电流 (mA×10, 即小数点后1位) */
-        debug_print_currents();
     }
-    /* 这里可以添加其他非阻塞任务 */
+
+    /* 串口命令轮询: 尽量频繁调用, 确保命令及时响应 */
+    serial_poll();
+
+    /* 开环调试快照打印 (非实时, 不阻塞控制环) */
+    openloop_debug_poll();
   }
+
   /* USER CODE END 3 */
 }
 

@@ -118,7 +118,7 @@ mt6701_data_t mt6701_read_angle(void)
         result.status    = status;
         result.crc       = crc_rcvd;
         result.crc_valid = 1U;
-        result.angle_deg = (float)angle * (360.0f / 16384.0f);
+        result.angle_deg = (float)angle * MT6701_ANGLE_SCALE;
         last_valid = result;
         return result;
     }

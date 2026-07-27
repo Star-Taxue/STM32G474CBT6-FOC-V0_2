@@ -56,7 +56,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-extern DMA_HandleTypeDef hdma_adc1;
+extern ADC_HandleTypeDef hadc1;
 extern UART_HandleTypeDef huart1;
 /* USER CODE BEGIN EV */
 
@@ -86,6 +86,41 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
+  /* 捕获 HardFault 现场: 从堆栈读取 PC (崩溃地址) 和 LR */
+  __asm volatile (
+    "tst lr, #4          \n"  /* 检查 EXC_RETURN bit2: MSP or PSP */
+    "ite eq              \n"
+    "mrseq r0, msp       \n"  /* MSP → R0 */
+    "mrsne r0, psp       \n"  /* PSP → R0 */
+    "ldr r1, [r0, #24]   \n"  /* stacked PC  */
+    "ldr r2, [r0, #20]   \n"  /* stacked LR  */
+    "ldr r3, [r0, #0]    \n"  /* stacked R0  */
+    : : : "r0", "r1", "r2", "r3"
+  );
+  register uint32_t pc __asm("r1");
+  register uint32_t lr __asm("r2");
+  register uint32_t r0 __asm("r3");
+
+  /* 用直接寄存器写 UART 输出 (printf 可能也挂了) */
+  volatile uint32_t *u1dr = (volatile uint32_t *)0x40013824; /* USART1_TDR */
+  const char *msg = "\r\nHF PC=0x";
+  while (*msg) { while(!(*(volatile uint32_t*)0x4001381C & (1<<7))); *u1dr = *msg++; }
+  for (int _i = 28; _i >= 0; _i -= 4) {
+    uint8_t nib = (pc >> _i) & 0xF;
+    char c = nib < 10 ? '0' + nib : 'A' + nib - 10;
+    while(!(*(volatile uint32_t*)0x4001381C & (1<<7)));
+    *u1dr = c;
+  }
+  msg = " LR=0x";
+  while (*msg) { while(!(*(volatile uint32_t*)0x4001381C & (1<<7))); *u1dr = *msg++; }
+  for (int _i = 28; _i >= 0; _i -= 4) {
+    uint8_t nib = (lr >> _i) & 0xF;
+    char c = nib < 10 ? '0' + nib : 'A' + nib - 10;
+    while(!(*(volatile uint32_t*)0x4001381C & (1<<7)));
+    *u1dr = c;
+  }
+  msg = "\r\n";
+  while (*msg) { while(!(*(volatile uint32_t*)0x4001381C & (1<<7))); *u1dr = *msg++; }
 
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
@@ -201,17 +236,17 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles DMA1 channel1 global interrupt.
+  * @brief This function handles ADC1 and ADC2 global interrupt.
   */
-void DMA1_Channel1_IRQHandler(void)
+void ADC1_2_IRQHandler(void)
 {
-  /* USER CODE BEGIN DMA1_Channel1_IRQn 0 */
+  /* USER CODE BEGIN ADC1_2_IRQn 0 */
 
-  /* USER CODE END DMA1_Channel1_IRQn 0 */
-  HAL_DMA_IRQHandler(&hdma_adc1);
-  /* USER CODE BEGIN DMA1_Channel1_IRQn 1 */
+  /* USER CODE END ADC1_2_IRQn 0 */
+  HAL_ADC_IRQHandler(&hadc1);
+  /* USER CODE BEGIN ADC1_2_IRQn 1 */
 
-  /* USER CODE END DMA1_Channel1_IRQn 1 */
+  /* USER CODE END ADC1_2_IRQn 1 */
 }
 
 /**

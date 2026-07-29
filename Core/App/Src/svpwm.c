@@ -25,12 +25,9 @@
  *
  *                  UpDown 中心对齐模式 CMP 映射:
  *                    CMP1 = CMP_CENTER - CMP_AMPLITUDE * v
- *                    v =  0 → CMP1 = 15000 (50% duty)
- *                    v = +1 → CMP1 =  1500 (~95% duty)
- *                    v = -1 → CMP1 = 28500 (~5% duty)
- *
- *                  该模式下死区硬件自动处理互补输出,
- *                  CMP3 无关联输出事件, 仅需写 CMP1.
+ *                    v =  0 → CMP1 = CENTER (50% duty)
+ *                    v = +1 → CMP1 = CENTER - AMPLITUDE (最大正占空比)
+ *                    v = -1 → CMP1 = CENTER + AMPLITUDE (最小占空比)
  */
 void svpwm_write(float va, float vb, float vc, int enable_svpwm)
 {
@@ -66,9 +63,9 @@ void svpwm_write(float va, float vb, float vc, int enable_svpwm)
     if (cmp_c > (int32_t)CMP_MAX) cmp_c = CMP_MAX;
 
     /*
-     * 写入 CMP1xR (仅 CMP1, 不写 CMP3):
+     * 写入 CMP1xR (仅 CMP1):
      * HRTIM 中心对齐 + 死区模式下, 硬件根据 CMP1 自动生成
-     * 互补输出和死区, CMP3 无关联输出事件无需写入.
+     * 互补输出和死区.
      */
     HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = (uint16_t)cmp_a;
     HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = (uint16_t)cmp_b;

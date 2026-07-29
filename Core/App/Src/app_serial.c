@@ -161,14 +161,8 @@ static void serial_execute(char *cmd_line)
         } else if (argc >= 2 && strcmp(argv[1], "svpwm") == 0) {
             openloop_set_svpwm(1);
             printf("mode: SVPWM\r\n");
-        } else if (argc >= 2 && strcmp(argv[1], "torque") == 0) {
-            foc_set_torque_mode();
-            printf("mode: torque (FOC)\r\n");
-        } else if (argc >= 2 && strcmp(argv[1], "speed") == 0) {
-            foc_set_speed_mode();
-            printf("mode: speed (FOC)\r\n");
         } else {
-            printf("mode: spwm/svpwm (openloop) | torque/speed (FOC)\r\n");
+            printf("mode: spwm/svpwm\r\n");
         }
 
     } else if (strcmp(cmd, "align") == 0) {
@@ -183,15 +177,18 @@ static void serial_execute(char *cmd_line)
         openloop_calib_offset();
         motor_running = 0;
 
-    } else if (strcmp(cmd, "eoffset") == 0) {
-        /* 在线调整编码器 offset */
+    } else if (strcmp(cmd, "test_theta") == 0) {
+        /* 固定电角度测试: test_theta 90 → θ=90°, test_theta -1 → 退出 */
         if (argc >= 2) {
             float deg = (float)atof(argv[1]);
-            foc_set_encoder_offset_deg(deg);
+            foc_test_theta(deg);
+            if (deg < 0.0f) {
+                printf("test_theta: off (encoder mode)\r\n");
+            } else {
+                printf("test_theta: locked at %d deg\r\n", (int)deg);
+            }
         } else {
-            printf("encoder offset = %d deg\r\n",
-                   (int)foc_get_encoder_offset_deg());
-            printf("usage: eoffset <deg>\r\n");
+            printf("usage: test_theta <deg>  (-1 to disable)\r\n");
         }
 
     } else if (strcmp(cmd, "foc") == 0) {
@@ -211,116 +208,40 @@ static void serial_execute(char *cmd_line)
             foc_set_iq_ref(iq);
             printf("torque Iq=%d mA\r\n", (int)(iq * 1000.0f));
         } else {
-            printf("usage: torque <A>\r\n");
-        }
-
-    } else if (strcmp(cmd, "speed") == 0) {
-        if (argc >= 2) {
-            float rpm = (float)atof(argv[1]);
-            foc_set_speed_ref(rpm);
-            printf("speed cmd=%d RPM (ramp %d RPM/ms)\r\n",
-                   (int)rpm, (int)FOC_SPEED_RAMP);
-        } else {
-            printf("speed cmd=%d RPM\r\n", (int)foc_get_speed_ref_cmd());
+            printf("usage: torque <A> (Iq ref=%d mA)\r\n",
+                   (int)(foc_get_iq_ref() * 1000.0f));
         }
 
     } else if (strncmp(cmd, "kp_i:", 5) == 0) {
         float kp = (float)atof(cmd + 5);
-        float _kp, ki;
-        foc_get_current_pi(&_kp, &ki);
-        foc_set_current_pi(kp, ki);
+        foc_set_current_kp(kp);
+        printf("Kp_i=%d\r\n", (int)(kp * 1000.0f));
 
     } else if (strncmp(cmd, "ki_i:", 5) == 0) {
         float ki = (float)atof(cmd + 5);
-        float kp, _ki;
-        foc_get_current_pi(&kp, &_ki);
-        foc_set_current_pi(kp, ki);
-
-    } else if (strncmp(cmd, "kp_s:", 5) == 0) {
-        float kp = (float)atof(cmd + 5);
-        float _kp, ki;
-        foc_get_speed_pi(&_kp, &ki);
-        foc_set_speed_pi(kp, ki);
-
-    } else if (strncmp(cmd, "ki_s:", 5) == 0) {
-        float ki = (float)atof(cmd + 5);
-        float kp, _ki;
-        foc_get_speed_pi(&kp, &_ki);
-        foc_set_speed_pi(kp, ki);
+        foc_set_current_ki(ki);
+        printf("Ki_i=%d\r\n", (int)(ki * 1000.0f));
 
     } else if (strcmp(cmd, "pid") == 0) {
-        if (argc >= 2 && strcmp(argv[1], "current") == 0 && argc >= 4) {
-            float kp = (float)atof(argv[2]);
-            float ki = (float)atof(argv[3]);
-            foc_set_current_pi(kp, ki);
-        } else if (argc >= 2 && strcmp(argv[1], "speed") == 0 && argc >= 4) {
-            float kp = (float)atof(argv[2]);
-            float ki = (float)atof(argv[3]);
-            foc_set_speed_pi(kp, ki);
+        if (argc >= 3) {
+            float kp = (float)atof(argv[1]);
+            float ki = (float)atof(argv[2]);
+            foc_set_current_kp(kp);
+            foc_set_current_ki(ki);
+            printf("pid: Kp=%d Ki=%d\r\n",
+                   (int)(kp * 1000.0f), (int)(ki * 1000.0f));
         } else {
-            /* 打印当前 PI 参数 */
-            float cp_kp, cp_ki, sp_kp, sp_ki;
-            foc_get_current_pi(&cp_kp, &cp_ki);
-            foc_get_speed_pi(&sp_kp, &sp_ki);
+            float kp, ki;
+            foc_get_current_pi(&kp, &ki);
             printf("pid current: Kp=%d Ki=%d\r\n",
-                   (int)(cp_kp * 1000.0f), (int)(cp_ki * 1000.0f));
-            printf("pid speed:   Kp=%d Ki=%d\r\n",
-                   (int)(sp_kp * 1000.0f), (int)(sp_ki * 1000.0f));
-            printf("usage: pid current|speed <Kp> <Ki>\r\n");
-        }
-
-    } else if (strcmp(cmd, "cogging") == 0 || strcmp(cmd, "cog") == 0) {
-        if (argc >= 2 && strcmp(argv[1], "off") == 0) {
-            foc_cogging_set_harmonic(0.0f, 6.0f, 0.0f);
-            foc_cogging_set_boost(0.0f, 200.0f);
-            printf("cogging: off\r\n");
-        } else if (argc >= 4) {
-            /* cogging <amps_A> <n_cycles> <phase_deg> [boost_A] [boost_rpm] */
-            float amps = (float)atof(argv[1]);
-            float n    = (float)atof(argv[2]);
-            float ph   = (float)atof(argv[3]);
-            foc_cogging_set_harmonic(amps, n, ph);
-
-            if (argc >= 6) {
-                float bst = (float)atof(argv[4]);
-                float thr = (float)atof(argv[5]);
-                foc_cogging_set_boost(bst, thr);
-            }
-        } else {
-            /* 显示当前配置 */
-            float amps, n, ph;
-            foc_cogging_get_harmonic(&amps, &n, &ph);
-            float bst, thr;
-            foc_cogging_get_boost(&bst, &thr);
-
-            printf("cogging: %s\r\n", (amps == 0.0f && bst == 0.0f) ? "off" : "active");
-            printf("  harmonic: A=%d mA n=%d phase=%d deg\r\n",
-                   (int)(amps * 1000.0f), (int)n, (int)ph);
-            printf("  boost:    %d mA threshold=%d RPM\r\n",
-                   (int)(bst * 1000.0f), (int)thr);
-            printf("usage: cogging off | <amps_A> <n> <phase_deg> [boost_A] [boost_rpm]\r\n");
-            printf("  eg:  cogging 0.1 6 0         (0.1A harmonic only)\r\n");
-            printf("  eg:  cogging 0.1 6 0 1.0 300 (harmonic + 1A boost below 300RPM)\r\n");
+                   (int)(kp * 1000.0f), (int)(ki * 1000.0f));
+            printf("usage: pid <Kp> <Ki>\r\n");
         }
 
     } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "info") == 0) {
         if (foc_is_enabled()) {
-            float id, iq, vq, speed;
-            foc_get_state(&id, &iq, &vq, &speed);
-            if (foc_get_mode() == FOC_MODE_SPEED) {
-                printf("FOC:%s mode=S Id:%d Iq:%d Vq:%d spd:%d cmd:%d enc:%d\r\n",
-                       motor_running ? "RUN" : "STOP",
-                       (int)(id * 1000.0f), (int)(iq * 1000.0f),
-                       (int)(vq * 1000.0f), (int)speed,
-                       (int)foc_get_speed_ref_cmd(),
-                       foc_get_enc_err_count());
-            } else {
-                printf("FOC:%s mode=T Id:%d Iq:%d Vq:%d spd:%d enc:%d\r\n",
-                       motor_running ? "RUN" : "STOP",
-                       (int)(id * 1000.0f), (int)(iq * 1000.0f),
-                       (int)(vq * 1000.0f), (int)speed,
-                       foc_get_enc_err_count());
-            }
+            printf("FOC: Iq ref=%d mA\r\n",
+                   (int)(foc_get_iq_ref() * 1000.0f));
         } else {
             float k, theta, freq;
             openloop_get_state(&k, &theta, &freq);
@@ -330,44 +251,23 @@ static void serial_execute(char *cmd_line)
         }
 
     } else if (strcmp(cmd, "trace") == 0) {
+        extern uint8_t g_trace_enabled;
         if (argc >= 2 && strcmp(argv[1], "on") == 0) {
-            foc_set_trace(1);
+            g_trace_enabled = 1;
+            printf("trace on\r\n");
         } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
-            foc_set_trace(0);
+            g_trace_enabled = 0;
+            printf("trace off\r\n");
         } else {
-            printf("usage: trace on|off  (10Hz diag: spd,iq,id,vq,ok,enc_err)\r\n");
-        }
-
-    } else if (strcmp(cmd, "bypass") == 0) {
-        /* 速度环旁路: bypass 0.5 → Iq=0.5A 固定, 绕过速度PI */
-        if (argc >= 2) {
-            float iq = (float)atof(argv[1]);
-            foc_speed_bypass(iq);
-        } else {
-            foc_speed_bypass(0.0f);
-            printf("bypass: speed PI restored\r\n");
-        }
-
-    } else if (strcmp(cmd, "odebug") == 0) {
-        if (argc >= 2 && strcmp(argv[1], "off") == 0) {
-            openloop_set_debug(0);
-            printf("odebug off\r\n");
-        } else {
-            openloop_set_debug(1);
-            printf("odebug on (default)\r\n");
+            printf("usage: trace on|off\r\n");
         }
 
     } else if (strcmp(cmd, "diag") == 0) {
         if (foc_is_enabled()) {
-            float id, iq, vq, speed;
-            foc_get_state(&id, &iq, &vq, &speed);
-            printf("diag: spd=%d Iq=%d Id=%d Vq=%d ok=%d enc=%d state=%d\r\n",
-                   (int)speed,
-                   (int)(iq * 1000.0f), (int)(id * 1000.0f),
-                   (int)(vq * 1000.0f),
-                   foc_get_enc_err_count() == 0 ? 1 : 0,
-                   foc_get_enc_err_count(),
-                   foc_get_run_state());
+            int iqr, iq, id, vd, vq, th, ia, ib;
+            foc_trace_get(&iqr, &iq, &id, &vd, &vq, &th, &ia, &ib);
+            printf("diag: iq_ref=%d iq=%d id=%d vd=%d vq=%d th=%d ia=%d ib=%d\r\n",
+                   iqr, iq, id, vd, vq, th, ia, ib);
         } else {
             float k, theta, freq;
             openloop_get_state(&k, &theta, &freq);

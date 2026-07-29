@@ -30,7 +30,7 @@
  * 校准命令: align 0.3 → 等1s → offset → 把打印值填到这里.
  */
 #ifndef ENCODER_OFFSET_DEG
-#define ENCODER_OFFSET_DEG  100   /* 校准值: 2026-07-23 */
+#define ENCODER_OFFSET_DEG  16   /* 106-90, 试 dq 轴对齐 */
 #endif
 
 /** 默认参数 */
@@ -60,17 +60,15 @@ static uint8_t lock_mode;    /* 对准锁定模式 (1=锁定θ, 不推进角度)
 static uint8_t svpwm_enable; /* SVPWM 模式 (1=马鞍波, 0=纯正弦)      */
 static float volt_a, volt_b, volt_c; /* 最近一次输出电压 (调试用)     */
 static float encoder_offset; /* 编码器安装偏移 (rad, 电角度)           */
-static uint8_t  ol_debug;        /* 开环调试输出开关                     */
-static uint32_t ol_step_cnt;     /* step 计数 (验证 20kHz 时序)          */
-static uint32_t ol_debug_period; /* 调试输出间隔 (step 数)               */
-static volatile uint8_t ol_snapshot_ready; /* 快照就绪, 主循环打印        */
-static float    ol_snap_theta;   /* 快照: 电角度                         */
-static float    ol_snap_K;       /* 快照: 调制系数                       */
-static float    ol_snap_va;      /* 快照: Va                            */
-static float    ol_snap_vb;      /* 快照: Vb                            */
-static float    ol_snap_vc;      /* 快照: Vc                            */
-static uint16_t ol_snap_adc[3];  /* 快照: ADC 原始值                     */
-static float    ol_snap_enc;      /* 快照: 编码器电角度 (deg)              */
+static uint16_t trace_cnt;       /* trace 降频计数 (与 FOC 共享 TRACE_DIV) */
+
+/* Trace 快照 (控制环捕获, 主循环打印, 不在 20kHz 路径调 printf) */
+static volatile uint8_t ol_trace_ready;
+static int      ol_snap_theta;
+static int      ol_snap_K;
+static int      ol_snap_va, ol_snap_vb, ol_snap_vc;
+static uint16_t ol_snap_adc[3];
+static int      ol_snap_enc;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -125,9 +123,7 @@ void openloop_init(void)
     lock_mode      = 0;
     svpwm_enable   = 1;   /* 默认 SVPWM */
     encoder_offset = (float)ENCODER_OFFSET_DEG * TWO_PI / 360.0f;
-    ol_debug       = 1;   /* 默认开启开环调试 */
-    ol_step_cnt    = 0;
-    ol_debug_period = 300; /* ~200ms @ 20kHz, 非整数倍电周期打破 aliasing */
+    trace_cnt      = 0;
     printf("encoder offset loaded: %d deg\r\n", (int)ENCODER_OFFSET_DEG);
 }
 
@@ -175,8 +171,9 @@ void openloop_step(void)
         theta = PI_OVER_2;
     }
 
-    /* K ≈ 0 时不更新占空比 (减少寄存器写入) */
+    /* K ≈ 0 时输出零电压 (CMP = CENTER, 50% duty), 防止上次电压残留 */
     if (current_K < 0.0005f) {
+        svpwm_write(0.0f, 0.0f, 0.0f, 0);
         if (!lock_mode) {
             theta += theta_step;
             if (theta >= TWO_PI) theta -= TWO_PI;
@@ -197,31 +194,34 @@ void openloop_step(void)
     /* SVPWM + CMP 映射 + HRTIM 写入 (共享函数) */
     svpwm_write(va, vb, vc, svpwm_enable);
 
-    /* --- 调试快照 (5Hz, 不阻塞实时路径) --- */
-    if (ol_debug) {
-        ol_step_cnt++;
-        if (ol_step_cnt >= ol_debug_period) {
-            ol_step_cnt = 0;
-            ol_snap_theta = theta;
-            ol_snap_K     = current_K;
-            /* 计算 SVPWM 注入后的马鞍波 (与 svpwm_write 内部逻辑一致) */
-            {
-                float vmax = volt_a, vmin = volt_a;
-                if (volt_b > vmax) vmax = volt_b;
-                if (volt_b < vmin) vmin = volt_b;
-                if (volt_c > vmax) vmax = volt_c;
-                if (volt_c < vmin) vmin = volt_c;
-                float v0 = (vmax + vmin) * 0.5f;
-                ol_snap_va = volt_a - v0;
-                ol_snap_vb = volt_b - v0;
-                ol_snap_vc = volt_c - v0;
-            }
-            curr_sense_get_raw_adc(&ol_snap_adc[0], &ol_snap_adc[1], &ol_snap_adc[2]);
-            ol_snap_enc = mt6701_read_angle().angle_deg * (float)POLE_PAIRS;
-            ol_snapshot_ready = 1;
+    /* --- 统一 Trace 快照 (与 FOC 共享 TRACE_DIV=200Hz, 不调 printf) --- */
+    extern uint8_t g_trace_enabled;
+    if (g_trace_enabled) {
+        trace_cnt++;
+        if (trace_cnt >= TRACE_DIV) {
+            trace_cnt = 0;
+            uint16_t adc_raw[3];
+            curr_sense_get_raw_adc(&adc_raw[0], &adc_raw[1], &adc_raw[2]);
+            float enc_elec = mt6701_read_angle().angle_deg * (float)POLE_PAIRS;
+            float vmax = va, vmin = va;
+            if (vb > vmax) vmax = vb;
+            if (vb < vmin) vmin = vb;
+            if (vc > vmax) vmax = vc;
+            if (vc < vmin) vmin = vc;
+            float v0 = (vmax + vmin) * 0.5f;
+
+            ol_snap_theta = (int)(theta * 57.2958f);
+            ol_snap_K     = (int)(current_K * 1000.0f);
+            ol_snap_va    = (int)((va - v0) * 1000.0f);
+            ol_snap_vb    = (int)((vb - v0) * 1000.0f);
+            ol_snap_vc    = (int)((vc - v0) * 1000.0f);
+            ol_snap_adc[0] = adc_raw[0];
+            ol_snap_adc[1] = adc_raw[1];
+            ol_snap_adc[2] = adc_raw[2];
+            ol_snap_enc   = (int)enc_elec;
+            ol_trace_ready = 1;
         }
     }
-
 
     /* --- 推进电角度 (锁定模式不推进) --- */
     if (!lock_mode) {
@@ -258,8 +258,8 @@ void openloop_start_align(float voltage)
  */
 void openloop_calib_offset(void)
 {
-    /* 读取编码器机械角度, 换算电角度 */
-    mt6701_data_t enc = mt6701_read_angle();
+    /* 读取编码器机械角度, 换算电角度 (阻塞读取, 确保校准精度) */
+    mt6701_data_t enc = mt6701_read_angle_blocking();
     float enc_elec = enc.angle_deg * (float)POLE_PAIRS;
 
     /* 归一化到 0~360° (防 NaN 死循环) */
@@ -317,46 +317,15 @@ void openloop_get_voltages(float *va, float *vb, float *vc)
 }
 
 /**
- * \brief           开/关 开环 5Hz 调试输出
- * \param[in]       on  1=开启, 0=关闭
+ * \brief           Trace 快照打印 (主循环调用, 不在 20kHz 路径)
  */
-void openloop_set_debug(uint8_t on)
+void openloop_trace_poll(void)
 {
-    ol_debug = on ? 1 : 0;
-    if (on) {
-        ol_step_cnt = 0;
-        printf("openloop debug ON (%lu steps = %d ms)\r\n",
-               ol_debug_period, (int)(ol_debug_period * 50 / 1000));
-    }
-}
-
-/**
- * \brief           开环调试快照打印 (主循环中调用, 非实时)
- * \note            由 openloop_step() 在当前 PWM 周期捕获快照,
- *                  主循环空闲时打印, 不阻塞 20kHz 控制路径.
- */
-void openloop_debug_poll(void)
-{
-    if (!ol_snapshot_ready) return;
-    ol_snapshot_ready = 0;
-
-    /* 编码器电角度归一化到 0~360° */
-    float enc = ol_snap_enc;
-    {
-        int _n = 0;
-        while (enc >= 360.0f && ++_n < 100) enc -= 360.0f;
-        _n = 0;
-        while (enc < 0.0f && ++_n < 100) enc += 360.0f;
-    }
-
-    printf("OL:cnt=%lu th=%d K=%d, %d, %d, %d, %u, %u, %u, %d\r\n",
-           ol_debug_period,
-           (int)(ol_snap_theta * 57.2958f),
-           (int)(ol_snap_K * 1000.0f),
-           (int)(ol_snap_va * 1000.0f),
-           (int)(ol_snap_vb * 1000.0f),
-           (int)(ol_snap_vc * 1000.0f),
+    if (!ol_trace_ready) return;
+    ol_trace_ready = 0;
+    printf("O:%d,%d,%d,%d,%d,%u,%u,%u,%d\r\n",
+           ol_snap_theta, ol_snap_K,
+           ol_snap_va, ol_snap_vb, ol_snap_vc,
            ol_snap_adc[0], ol_snap_adc[1], ol_snap_adc[2],
-           (int)enc);
+           ol_snap_enc);
 }
-

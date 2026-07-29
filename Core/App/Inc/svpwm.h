@@ -26,12 +26,6 @@ extern "C" {
  *                    Timer B (PA10/PA11) → 电机 A 相
  *                    Timer A (PA8/PA9)   → 电机 B 相
  *                    Timer D (PB14/PB15) → 电机 C 相
- *
- *                  HRTIM UpDown 中心对齐模式:
- *                    上坡计数到 CMP1 → 输出高电平
- *                    下坡对称点 → 自动翻转为低电平
- *                    死区硬件自动插入互补输出
- *                    仅需写 CMP1xR, 不写 CMP3xR
  */
 void svpwm_write(float va, float vb, float vc, int enable_svpwm);
 

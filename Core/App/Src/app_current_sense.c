@@ -11,11 +11,13 @@
 #include "main.h"
 #include "adc.h"
 #include "app_current_sense.h"
+#include "app_foc.h"
+#include "mt6701.h"
 
 /* Private variables ---------------------------------------------------------*/
 
-/** 电流缓冲: 3 相 Ia, Ib, Ic (由注入组 JEOC 中断更新) */
-static uint16_t adc_curr_buf[3] = {0};
+/** 电流缓冲: 3 相 (由注入组 JEOC 中断更新, ISR/FOC 共享) */
+uint16_t adc_curr_buf[3] = {0};
 
 /** 各通道零点 ADC 偏移量 (校准后可运行时修改) */
 static uint16_t adc_offset[3] = {
@@ -242,6 +244,15 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
         adc_curr_buf[0] = hadc->Instance->JDR1;
         adc_curr_buf[1] = hadc->Instance->JDR2;
         adc_curr_buf[2] = hadc->Instance->JDR3;
+
+        /* FOC 电流环在 ISR 中运行 (20kHz) */
+        if (foc_is_enabled()) {
+            foc_isr();
+        }
+
         new_data_flag = 1;
+
+        /* 启动下一次编码器 DMA, 下个周期数据就绪 */
+        mt6701_trigger_read();
     }
 }

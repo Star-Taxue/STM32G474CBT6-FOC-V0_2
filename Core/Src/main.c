@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dma.h"
 #include "hrtim.h"
 #include "spi.h"
 #include "usart.h"
@@ -95,6 +96,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_SPI1_Init();
   MX_HRTIM1_Init();
@@ -155,30 +157,30 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     /*
-     * 快速控制环: ADC 每次扫描完成 (20kHz) 时运行.
-     * FOC 闭环与开环互斥调度.
-     *
-     * 注意: foc_step() 内部通过 curr_sense_get_all() 清除 new_data_flag,
-     * 但 openloop_step() 不读电流, 因此必须在这里原子读取并清除标志,
-     * 防止 openloop_step() 以 CPU 速度失控运行.
+     * FOC 电流环在 ADC JEOC ISR 中运行 (20kHz), 主循环仅:
+     *   - 开环: 清 flag + openloop_step()
+     *   - 串口: serial_poll()
+     *   - Trace: ISR 捕获, 主循环打印
      */
     if (curr_sense_data_ready()) {
         if (foc_is_enabled()) {
-            foc_step();
+            /* FOC: ISR 已处理全部, 仅清标志 */
+            __disable_irq();
+            new_data_flag_clear();
+            __enable_irq();
         } else {
-            /* 原子清除 data_ready 标志, 让 openloop_step() 严格按 20kHz 运行 */
+            /* 开环: 清标志 + step */
             __disable_irq();
             new_data_flag_clear();
             __enable_irq();
             openloop_step();
         }
+        /* 编码器 DMA 已由 ISR 触发 */
     }
 
-    /* 串口命令轮询: 尽量频繁调用, 确保命令及时响应 */
     serial_poll();
-
-    /* 开环调试快照打印 (非实时, 不阻塞控制环) */
-    openloop_debug_poll();
+    foc_trace_poll();
+    openloop_trace_poll();
   }
 
   /* USER CODE END 3 */

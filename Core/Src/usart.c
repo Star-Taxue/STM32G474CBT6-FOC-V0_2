@@ -143,11 +143,45 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 /* USER CODE BEGIN 1 */
 
 /* 非阻塞 TX 环形缓冲区 (中断驱动, printf 不阻塞控制环) ---------------*/
-#define TX_RING_SIZE  512
+#define TX_RING_SIZE  1024
 static uint8_t  tx_ring[TX_RING_SIZE];
 static volatile uint16_t tx_wr;   /* putchar 写入位置                   */
 static volatile uint16_t tx_rd;   /* TX ISR 读出位置                    */
 static volatile uint8_t  tx_active; /* TX 中断正在发送标志               */
+
+/**
+ * \brief           批量写入环形缓冲 (高效, 用于二进制 trace 数据)
+ * \param[in]       data  数据指针
+ * \param[in]       len   字节数
+ * \note            缓冲空间不足时丢弃整个写入 (保证数据完整性).
+ *                  写入后若 TX 空闲, 自动启动中断发送.
+ */
+void uart_write_bulk(const uint8_t *data, uint16_t len)
+{
+    uint16_t avail;
+
+    /* 计算可用空间: rd 领先 wr 时 avail = rd - wr - 1 */
+    if (tx_rd > tx_wr) {
+        avail = tx_rd - tx_wr - 1;
+    } else {
+        avail = TX_RING_SIZE - tx_wr + tx_rd - 1;
+    }
+
+    if (len > avail) {
+        return;  /* 空间不足, 丢弃整个包 (保证数据完整性) */
+    }
+
+    for (uint16_t i = 0; i < len; i++) {
+        tx_ring[tx_wr] = data[i];
+        tx_wr = (tx_wr + 1) % TX_RING_SIZE;
+    }
+
+    /* 若 TX 空闲, 启动中断发送 */
+    if (!tx_active) {
+        tx_active = 1;
+        HAL_UART_Transmit_IT(&huart1, &tx_ring[tx_rd], 1);
+    }
+}
 
 /**
  * \brief           启动一次中断发送 (从 tx_rd 取 1 字节)

@@ -70,8 +70,7 @@ void openloop_set_svpwm(uint8_t svpwm);
  */
 void openloop_get_voltages(float *va, float *vb, float *vc);
 
-void openloop_set_debug(uint8_t on);
-void openloop_debug_poll(void);
+void openloop_trace_poll(void);
 
 #ifdef __cplusplus
 }

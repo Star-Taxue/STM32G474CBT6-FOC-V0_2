@@ -11,9 +11,12 @@ extern "C" {
 /**
  * \brief           三相电流零点校准值 (校准参考值, 需根据实际硬件重新校准)
  */
-#define CURR_SENSE_OFFSET_A  2041   /* Ia: 实测 ~2040.5 */
-#define CURR_SENSE_OFFSET_B  2024   /* Ib: 实测 ~2024.4 */
-#define CURR_SENSE_OFFSET_C  1990   /* Ic: 实测 ~1989.7 */
+#define CURR_SENSE_OFFSET_A  2023   /* Ia: 从 30Hz trace 数据反推 */
+#define CURR_SENSE_OFFSET_B  2022   /* Ib: 从 30Hz trace 数据反推 */
+#define CURR_SENSE_OFFSET_C  2052   /* Ic: 从 30Hz trace 数据反推 */
+
+/* ISR 可直接访问的 ADC 缓冲区 (JEOC 回调写入, foc_isr 读取) */
+extern uint16_t adc_curr_buf[3];
 
 /**
  * \brief           初始化电流采样模块

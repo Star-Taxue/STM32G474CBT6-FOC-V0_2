@@ -69,13 +69,11 @@ void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
-
   /* ADC 内部硬件校准 (补偿内部电容/偏置) */
   if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
   {
     Error_Handler();
   }
-
   /** Configure Injected Channel
   */
   sConfigInjected.InjectedChannel = ADC_CHANNEL_3;

@@ -177,6 +177,36 @@ static void serial_execute(char *cmd_line)
         openloop_calib_offset();
         motor_running = 0;
 
+    } else if (strcmp(cmd, "pos") == 0) {
+        /* pos on/off → 位置模式, pos <deg> → 设目标 */
+        if (argc >= 2 && strcmp(argv[1], "on") == 0) {
+            foc_pos_enable(1);
+            printf("pos mode on\r\n");
+        } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+            foc_pos_enable(0);
+            printf("pos mode off\r\n");
+        } else if (argc >= 2) {
+            float deg = (float)atof(argv[1]);
+            foc_set_target(deg);
+            foc_pos_enable(1);
+            printf("pos target=%d deg\r\n", (int)deg);
+        } else {
+            printf("pos=%d deg  usage: pos on|off | pos <deg> | pos_kp <val>\r\n",
+                   (int)foc_get_position());
+        }
+
+    } else if (strcmp(cmd, "pos_kp") == 0) {
+        if (argc >= 2) foc_set_pos_kp((float)atof(argv[1]));
+        printf("pos_kp set\r\n");
+
+    } else if (strcmp(cmd, "pos_kd") == 0) {
+        if (argc >= 2) foc_set_pos_kd((float)atof(argv[1]));
+        printf("pos_kd set\r\n");
+
+    } else if (strcmp(cmd, "pos_ki") == 0) {
+        if (argc >= 2) foc_set_pos_ki((float)atof(argv[1]));
+        printf("pos_ki set\r\n");
+
     } else if (strcmp(cmd, "test_theta") == 0) {
         /* 固定电角度测试: test_theta 90 → θ=90°, test_theta -1 → 退出 */
         if (argc >= 2) {
@@ -264,10 +294,10 @@ static void serial_execute(char *cmd_line)
 
     } else if (strcmp(cmd, "diag") == 0) {
         if (foc_is_enabled()) {
-            int iqr, iq, id, vd, vq, th, ia, ib;
-            foc_trace_get(&iqr, &iq, &id, &vd, &vq, &th, &ia, &ib);
-            printf("diag: iq_ref=%d iq=%d id=%d vd=%d vq=%d th=%d ia=%d ib=%d\r\n",
-                   iqr, iq, id, vd, vq, th, ia, ib);
+            int iqr, iq, id, vd, vq, th, ia, ib, pos;
+            foc_trace_get(&iqr, &iq, &id, &vd, &vq, &th, &ia, &ib, &pos);
+            printf("diag: iq_ref=%d iq=%d id=%d vd=%d vq=%d th=%d ia=%d ib=%d pos=%d\r\n",
+                   iqr, iq, id, vd, vq, th, ia, ib, pos);
         } else {
             float k, theta, freq;
             openloop_get_state(&k, &theta, &freq);

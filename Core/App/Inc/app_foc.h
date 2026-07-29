@@ -17,10 +17,16 @@ extern "C" {
 
 /* ---- 默认 PI 参数 ---- */
 
-#define FOC_DEFAULT_KP   0.1f     /**< 电流环 Kp (归一化 V/A) */
-#define FOC_DEFAULT_KI   50.0f    /**< 电流环 Ki (归一化 V/A/s) */
+#define FOC_DEFAULT_KP   0.01f     /**< 电流环 Kp (归一化 V/A) */
+#define FOC_DEFAULT_KI   3.0f    /**< 电流环 Ki (归一化 V/A/s) */
 #define FOC_IQ_MAX       3.0f     /**< Iq 限幅 (A)                 */
 #define FOC_V_MAX        0.95f    /**< 电压输出限幅 (归一化)       */
+
+/* ---- 位置环 ---- */
+
+#define FOC_POS_DEFAULT_KP  3.0f    /**< 位置环 Kp (A/deg)              */
+#define FOC_POS_DEFAULT_KD  10.0f   /**< 位置环 Kd (A/deg_diff)         */
+#define FOC_POS_LOOP_DIV    100     /**< 位置环降频: 20kHz/100=200Hz   */
 
 /* ---- 编码器 ---- */
 
@@ -44,6 +50,14 @@ void foc_get_current_pi(float *kp, float *ki);
 /* 固定电角度测试: foc_test_theta(90) → θ锁定90°, -1 → 退出 */
 void foc_test_theta(float deg);
 
+/* 位置环: pos 模式时, foc_isr 内 1kHz 跑位置P → iq_ref */
+void foc_pos_enable(uint8_t en);
+void foc_set_target(float mech_deg);
+float foc_get_position(void);
+void foc_set_pos_kp(float kp);
+void foc_set_pos_kd(float kd);
+void foc_set_pos_ki(float ki);
+
 /* ADC ISR 回调: 读电流 → FOC → 写 PWM (20kHz, ISR 上下文) */
 void foc_isr(void);
 
@@ -51,7 +65,7 @@ void foc_isr(void);
 uint8_t foc_trace_ready(void);
 void foc_trace_get(int *iq_ref, int *iq, int *id,
                    int *vd, int *vq, int *theta,
-                   int *ia, int *ib);
+                   int *ia, int *ib, int *pos);
 void foc_trace_poll(void);
 
 #ifdef __cplusplus

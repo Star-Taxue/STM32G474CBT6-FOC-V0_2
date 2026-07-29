@@ -75,6 +75,17 @@ static float   iq_ref;                  /* Iq 目标 (A)                     */
 static float   encoder_offset_rad;      /* 编码器安装偏移 (rad, 电角度)    */
 static float   scale_amps;              /* ADC LSB → Amps 转换系数         */
 
+/* 位置环 */
+static uint8_t  pos_mode;               /* 位置模式使能                    */
+static float    pos_target_deg;         /* 目标机械角 (deg)                */
+static float    pos_kp;                 /* 位置 P 增益 (A/deg_mech)        */
+static float    pos_kd;                 /* 位置 D 增益 (A/(deg/s))         */
+static float    pos_ki;                 /* 位置 I 增益 (A/(deg*s))         */
+static float    pos_integral;           /* 位置积分器                      */
+static uint8_t  pos_div;                /* 降频计数: 0..POS_LOOP_DIV-1     */
+static float    pos_current;            /* 当前位置 (机械角 deg)            */
+static float    pos_prev;               /* 上次位置 (deg), 差分用           */
+
 /* ADC 偏移 (运行时校准值, 由 curr_sense_isr_read 填充) */
 static uint16_t adc_off[3];
 
@@ -86,7 +97,7 @@ static float dbg_theta, dbg_ia, dbg_ib;
 static volatile uint8_t trace_ready;
 static int snap_iq_ref, snap_iq, snap_id;
 static int snap_vd, snap_vq, snap_theta;
-static int snap_ia, snap_ib;
+static int snap_ia, snap_ib, snap_pos;
 
 /* -------------------------------------------------------------------------- */
 /*  编码器角度                                                                 */
@@ -162,6 +173,7 @@ static void foc_trace_capture(void)
     snap_theta  = (int)(dbg_theta * 57.2958f);
     snap_ia     = (int)(dbg_ia * 1000.0f);
     snap_ib     = (int)(dbg_ib * 1000.0f);
+    snap_pos    = (int)(pos_current * 10.0f);  /* 机械角 ×10 */
     trace_ready = 1;
 }
 
@@ -185,6 +197,24 @@ void foc_isr(void)
     /* 2. 读编码器 → 电角度 */
     float theta = foc_read_elec_angle();
     dbg_theta = theta;
+
+    /* 2.5 位置环 PD (200Hz), D用位置差分, 不用速度估算 */
+    if (pos_mode) {
+        pos_current = mt6701_read_angle().angle_deg;
+        if (++pos_div >= FOC_POS_LOOP_DIV) {
+            pos_div = 0;
+            float err = pos_target_deg - pos_current;
+            if (err > 180.0f)       err -= 360.0f;
+            else if (err < -180.0f) err += 360.0f;
+            float d = pos_current - pos_prev;
+            if (d > 180.0f)       d -= 360.0f;
+            else if (d < -180.0f) d += 360.0f;
+            pos_prev = pos_current;
+            iq_ref = -pos_kp * err + pos_kd * d;
+            if (iq_ref >  FOC_IQ_MAX) iq_ref =  FOC_IQ_MAX;
+            if (iq_ref < -FOC_IQ_MAX) iq_ref = -FOC_IQ_MAX;
+        }
+    }
 
     /* 3. Clarke 变换 (幅值不变): Iαβ = [ia; (ia+2ib)/√3] */
     float i_alpha = ia;
@@ -241,6 +271,16 @@ void foc_init(void)
 {
     enabled = 0;
     iq_ref  = 0.0f;
+
+    /* 位置环默认值 */
+    pos_mode   = 0;
+    pos_kp     = FOC_POS_DEFAULT_KP;
+    pos_kd     = FOC_POS_DEFAULT_KD;
+    pos_ki     = 0.0f;   /* 默认关积分, 需要时 pos_ki 设置 */
+    pos_integral = 0.0f;
+    pos_div    = 0;
+    pos_target_deg = 0.0f;
+    pos_prev   = 0.0f;
 
     /* 编码器偏移, 独立于开环 */
     encoder_offset_rad = (float)FOC_ENCODER_OFFSET_DEG * DEG_TO_RAD;
@@ -315,6 +355,37 @@ float foc_get_iq_ref(void)
     return iq_ref;
 }
 
+/* ---- 位置环 ---- */
+
+void foc_pos_enable(uint8_t en)
+{
+    pos_mode = en;
+    pos_div  = 0;
+    pos_integral = 0.0f;
+    if (en) {
+        pos_prev = mt6701_read_angle().angle_deg;
+    } else {
+        iq_ref = 0.0f;
+    }
+}
+
+void foc_set_target(float mech_deg)
+{
+    while (mech_deg >= 360.0f) mech_deg -= 360.0f;
+    while (mech_deg < 0.0f)    mech_deg += 360.0f;
+    pos_target_deg = mech_deg;
+    pos_integral = 0.0f;  /* 换目标时重置积分 */
+}
+
+float foc_get_position(void)
+{
+    return pos_current;
+}
+
+void foc_set_pos_kp(float kp) { pos_kp = kp; }
+void foc_set_pos_kd(float kd) { pos_kd = kd; }
+void foc_set_pos_ki(float ki) { pos_ki = ki; pos_integral = 0.0f; }
+
 /* ---- PI 调参 ---- */
 
 void foc_set_current_kp(float kp) { pi_d.kp = kp; pi_q.kp = kp; }
@@ -335,7 +406,7 @@ uint8_t foc_trace_ready(void)
 
 void foc_trace_get(int *iq_ref_out, int *iq_out, int *id_out,
                    int *vd_out, int *vq_out, int *theta_out,
-                   int *ia_out, int *ib_out)
+                   int *ia_out, int *ib_out, int *pos_out)
 {
     __disable_irq();
     *iq_ref_out = snap_iq_ref;
@@ -346,6 +417,7 @@ void foc_trace_get(int *iq_ref_out, int *iq_out, int *id_out,
     *theta_out  = snap_theta;
     *ia_out     = snap_ia;
     *ib_out     = snap_ib;
+    *pos_out    = snap_pos;
     trace_ready = 0;
     __enable_irq();
 }
@@ -357,8 +429,8 @@ void foc_trace_poll(void)
 {
     if (!trace_ready) return;
 
-    int iqr, iq, id, vd, vq, th, ia, ib;
-    foc_trace_get(&iqr, &iq, &id, &vd, &vq, &th, &ia, &ib);
-    printf("F:%d,%d,%d,%d,%d,%d,%d,%d\r\n",
-           iqr, iq, id, vd, vq, th, ia, ib);
+    int iqr, iq, id, vd, vq, th, ia, ib, pos;
+    foc_trace_get(&iqr, &iq, &id, &vd, &vq, &th, &ia, &ib, &pos);
+    printf("F:%d,%d,%d,%d,%d,%d,%d,%d,%d\r\n",
+           iqr, iq, id, vd, vq, th, ia, ib, pos);
 }

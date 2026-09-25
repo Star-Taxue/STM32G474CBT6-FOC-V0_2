@@ -268,10 +268,85 @@ static void serial_execute(char *cmd_line)
             printf("usage: pid <Kp> <Ki>\r\n");
         }
 
+    } else if (strcmp(cmd, "speed") == 0) {
+        /* speed on/off → 速度模式, speed <RPM> → 设目标转速 */
+        if (argc >= 2 && strcmp(argv[1], "on") == 0) {
+            foc_speed_enable(1);
+            printf("speed mode on, ref=%d RPM\r\n", (int)foc_get_speed_ref());
+        } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+            foc_speed_enable(0);
+            printf("speed mode off\r\n");
+        } else if (argc >= 2) {
+            float rpm = (float)atof(argv[1]);
+            foc_set_speed_ref(rpm);
+            foc_speed_enable(1);
+            printf("speed ref=%d RPM\r\n", (int)rpm);
+        } else {
+            float kp, ki;
+            foc_get_speed_pi(&kp, &ki);
+            printf("speed: ref=%d RPM est=%d RPM Kp=%.3f Ki=%.3f  usage: speed on|off|<RPM>\r\n",
+                   (int)foc_get_speed_ref(), (int)foc_get_speed_est(),
+                   (double)kp, (double)ki);
+        }
+
+    } else if (strcmp(cmd, "speed_kp") == 0) {
+        if (argc >= 2) foc_set_speed_kp((float)atof(argv[1]));
+        float kp, ki;
+        foc_get_speed_pi(&kp, &ki);
+        printf("speed Kp=%.3f Ki=%.3f\r\n", (double)kp, (double)ki);
+
+    } else if (strcmp(cmd, "speed_ki") == 0) {
+        if (argc >= 2) foc_set_speed_ki((float)atof(argv[1]));
+        float kp, ki;
+        foc_get_speed_pi(&kp, &ki);
+        printf("speed Kp=%.3f Ki=%.3f\r\n", (double)kp, (double)ki);
+
+    } else if (strcmp(cmd, "ff") == 0) {
+        /* ff <A> — 摩擦前馈电流 (破静摩擦, 默认 0.3) */
+        if (argc >= 2) foc_set_friction_ff((float)atof(argv[1]));
+        printf("friction ff=%d mA\r\n", (int)(foc_get_friction_ff() * 1000.0f));
+
+    } else if (strcmp(cmd, "cog_cal") == 0) {
+        /* cog_cal [rpm] [revs] — 齿槽转矩标定 (电机需可自由旋转) */
+        float rpm = (argc >= 2) ? (float)atof(argv[1]) : COG_CAL_DEFAULT_RPM;
+        uint32_t revs = (argc >= 3) ? (uint32_t)atoi(argv[2])
+                                    : (uint32_t)COG_CAL_DEFAULT_REVS;
+        if (rpm < 20.0f)  rpm = 20.0f;
+        if (rpm > 200.0f) rpm = 200.0f;
+        if (revs < 5)   revs = 5;
+        if (revs > 50)  revs = 50;
+        printf("cog calib: %d RPM x %d revs...\r\n", (int)rpm, (int)revs);
+        cog_calib_start(rpm, revs);
+
+    } else if (strcmp(cmd, "cog") == 0) {
+        /* cog [on|off] — 齿槽前馈开关 / 标定进度查询 */
+        if (argc >= 2 && strcmp(argv[1], "on") == 0) {
+            cog_set_enabled(1);
+        } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+            cog_set_enabled(0);
+        }
+        cog_print_status();
+
+    } else if (strcmp(cmd, "speed_pid") == 0) {
+        if (argc >= 3) {
+            foc_set_speed_kp((float)atof(argv[1]));
+            foc_set_speed_ki((float)atof(argv[2]));
+        }
+        float kp, ki;
+        foc_get_speed_pi(&kp, &ki);
+        printf("speed pid: Kp=%.3f Ki=%.3f\r\n", (double)kp, (double)ki);
+
     } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "info") == 0) {
         if (foc_is_enabled()) {
-            printf("FOC: Iq ref=%d mA\r\n",
-                   (int)(foc_get_iq_ref() * 1000.0f));
+            if (foc_speed_is_enabled()) {
+                printf("FOC speed: ref=%d RPM est=%d RPM Iq=%d mA\r\n",
+                       (int)foc_get_speed_ref(),
+                       (int)foc_get_speed_est(),
+                       (int)(foc_get_iq_ref() * 1000.0f));
+            } else {
+                printf("FOC: Iq ref=%d mA\r\n",
+                       (int)(foc_get_iq_ref() * 1000.0f));
+            }
         } else {
             float k, theta, freq;
             openloop_get_state(&k, &theta, &freq);
@@ -294,10 +369,10 @@ static void serial_execute(char *cmd_line)
 
     } else if (strcmp(cmd, "diag") == 0) {
         if (foc_is_enabled()) {
-            int iqr, iq, id, vd, vq, th, ia, ib, pos;
-            foc_trace_get(&iqr, &iq, &id, &vd, &vq, &th, &ia, &ib, &pos);
-            printf("diag: iq_ref=%d iq=%d id=%d vd=%d vq=%d th=%d ia=%d ib=%d pos=%d\r\n",
-                   iqr, iq, id, vd, vq, th, ia, ib, pos);
+            int iqr, iq, id, vd, vq, th, ia, ib, pos, sr, se;
+            foc_trace_get(&iqr, &iq, &id, &vd, &vq, &th, &ia, &ib, &pos, &sr, &se);
+            printf("diag: iq_ref=%d iq=%d id=%d vd=%d vq=%d th=%d ia=%d ib=%d pos=%d speed_ref=%d speed=%d\r\n",
+                   iqr, iq, id, vd, vq, th, ia, ib, pos, sr, se);
         } else {
             float k, theta, freq;
             openloop_get_state(&k, &theta, &freq);
@@ -308,7 +383,7 @@ static void serial_execute(char *cmd_line)
 
     } else {
         printf("unknown: %s\r\n", cmd);
-        printf("cmds: start/stop/f/v/align/offset/foc/torque/speed/mode/pid/cogging/?\r\n");
+        printf("cmds: start/stop/f/v/align/offset/foc/torque/speed/speed_kp/speed_ki/mode/pid/pos/pos_kp/pos_kd/pos_ki/trace/diag/?\r\n");
     }
 }
 
@@ -338,6 +413,8 @@ void serial_init(void)
 void serial_poll(void)
 {
     char ch;
+
+    cog_calib_notify();   /* 齿槽标定完成时打印摘要 */
 
     while (ring_getchar(&ch)) {
         /* 忽略回车, 换行触发命令执行 */

@@ -1,3 +1,7 @@
 build
 mx.scratch
 !.settings
+
+# 本地/隐私: agent 会话状态与日志
+.omo/
+*.log

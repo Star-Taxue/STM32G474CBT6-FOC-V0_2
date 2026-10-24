@@ -112,6 +112,8 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
+  /* 三个注入通道组成一个序列, 只在 JEOS 时进入控制回调. */
+  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
   /* USER CODE END ADC1_Init 2 */
 
 }

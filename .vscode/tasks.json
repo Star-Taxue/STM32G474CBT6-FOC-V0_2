@@ -1,0 +1,28 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // 供 launch.json 的 DAPLink 配置 preLaunchTask 调用.
+            // 复用 STM32Cube 扩展自带的 cube-cmake, 与 VS Code 里正常构建一致.
+            // 注意: 路径含扩展版本号, 扩展升级后需更新此路径.
+            "label": "build",
+            "type": "shell",
+            "command": "C:/Users/STAR/.vscode/extensions/stmicroelectronics.stm32cube-ide-build-cmake-1.47.0-win32-x64/resources/cube-cmake/win32/x86_64/cube-cmake.exe",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/Debug",
+                "--"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}

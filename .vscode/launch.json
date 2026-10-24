@@ -1,11 +1,40 @@
 {
-    // 使用 IntelliSense 了解相关属性。 
+    // 使用 IntelliSense 了解相关属性。
     // 悬停以查看现有属性的描述。
     // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        
         {
+            // DAPLink (CMSIS-DAP) 探针: 通过 OpenOCD + Cortex-Debug 扩展调试.
+            // 依赖扩展: marus25.cortex-debug (见 .vscode/extensions.json).
+            // 若 OpenOCD 或工具链路径变化, 只改下面几处路径即可.
+            "name": "DAPLink (OpenOCD)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/FOC_V0_2.elf",
+            "servertype": "openocd",
+            "serverpath": "E:/tool/openocd-20250710/OpenOCD-20250710-0.12.0/bin/openocd.exe",
+            "searchDir": [
+                "E:/tool/openocd-20250710/OpenOCD-20250710-0.12.0/share/openocd/scripts"
+            ],
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32g4x.cfg"
+            ],
+            "openOCDLaunchCommands": [
+                "adapter speed 8000",
+                // stm32g4x.cfg 在 reset-start 事件里把速度降回 2000 kHz,
+                // 这里覆盖, 否则烧录(发生在复位之后)只有 2 MHz.
+                "stm32g4x.cpu configure -event reset-start { adapter speed 8000 }"
+            ],
+            "device": "STM32G474CB",
+            "armToolchainPath": "E:/tool/14.3 rel1/bin",
+            "runToEntryPoint": "main",
+            "preLaunchTask": "build"
+        },
+        {
+            // 原 ST-Link 配置保留: 使用 STM32Cube 扩展自带的 ST-Link GDB Server.
             "type": "stlinkgdbtarget",
             "request": "launch",
             "name": "STM32Cube: Launch ST-Link GDB Server",

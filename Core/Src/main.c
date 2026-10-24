@@ -102,10 +102,11 @@ int main(void)
   MX_HRTIM1_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
+  HAL_NVIC_SetPriority(USART1_IRQn, 2, 0);
   printf("init start\r\n");
   mt6701_init();
 
-  /* 启动 ADC1 注入组 (JEOC 中断), 由 HRTIM ADC_TRG2 触发 */
+  /* 启动 ADC1 注入组 (JEOS 中断), 由 HRTIM ADC_TRG2 触发 */
   curr_sense_init();
 
   /*
@@ -157,7 +158,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     /*
-     * FOC 电流环在 ADC JEOC ISR 中运行 (20kHz), 主循环仅:
+     * FOC 电流环在 ADC JEOS ISR 中运行 (20kHz), 主循环仅:
      *   - 开环: 清 flag + openloop_step()
      *   - 串口: serial_poll()
      *   - Trace: ISR 捕获, 主循环打印

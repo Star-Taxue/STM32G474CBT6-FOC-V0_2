@@ -19,9 +19,17 @@
 #include <stdio.h>
 /* Private defines -----------------------------------------------------------*/
 
+extern uint8_t g_trace_enabled;
+
 #define RX_BUF_SIZE      64    /* 环形缓冲区大小 (接收字符)         */
 #define LINE_BUF_SIZE     32    /* 命令行缓冲区大小                   */
 #define MAX_ARGS           5    /* 最大命令参数个数 (cmd + 4 args)    */
+
+#define SERIAL_SWITCH_FOC       0x01U
+#define SERIAL_SWITCH_SPEED     0x02U
+#define SERIAL_SWITCH_POSITION  0x04U
+#define SERIAL_SWITCH_TRACE     0x08U
+#define SERIAL_SWITCH_MASK      0x0FU
 
 /* Private variables ---------------------------------------------------------*/
 
@@ -33,6 +41,7 @@ static char     line_buf[LINE_BUF_SIZE]; /* 当前命令行缓冲区           *
 static uint8_t  line_idx;               /* 命令行写入位置              */
 
 static uint8_t  motor_running;          /* 电机运行标志                */
+static uint32_t serial_switch_flags;    /* 控制功能位                  */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -57,6 +66,36 @@ static int ring_getchar(char *ch)
     return 1;
 }
 
+static void serial_print_fixed3(const char *name, float value)
+{
+    int32_t scaled = (int32_t)(value * 1000.0f);
+    uint32_t magnitude = (scaled < 0) ? (uint32_t)(-scaled) : (uint32_t)scaled;
+
+    printf("%s:%s%ld.%03ld\r\n",
+           name,
+           (scaled < 0) ? "-" : "",
+           (long)(magnitude / 1000U),
+           (long)(magnitude % 1000U));
+}
+
+static void serial_apply_switches(uint32_t flags)
+{
+    serial_switch_flags = flags & SERIAL_SWITCH_MASK;
+    g_trace_enabled = (serial_switch_flags & SERIAL_SWITCH_TRACE) != 0U;
+
+    if ((serial_switch_flags & SERIAL_SWITCH_FOC) != 0U) {
+        foc_start();
+        motor_running = 1U;
+    } else {
+        foc_stop();
+        motor_running = 0U;
+    }
+
+    foc_speed_enable((serial_switch_flags & SERIAL_SWITCH_SPEED) != 0U);
+    foc_pos_enable((serial_switch_flags & SERIAL_SWITCH_POSITION) != 0U);
+    printf("sw:0x%02lX\r\n", (unsigned long)serial_switch_flags);
+}
+
 /**
  * \brief           执行单条命令
  * \param[in]       cmd_line  命令行 (以 \\0 结尾)
@@ -66,6 +105,71 @@ static void serial_execute(char *cmd_line)
     /* 跳过前导空白 */
     while (*cmd_line == ' ' || *cmd_line == '\t') cmd_line++;
     if (*cmd_line == '\0') return;  /* 空行 */
+
+    if (strncmp(cmd_line, "sw:", 3) == 0) {
+        serial_apply_switches((uint32_t)strtoul(cmd_line + 3, NULL, 0));
+        return;
+    }
+    if (strncmp(cmd_line, "kp:", 3) == 0) {
+        float value = (float)atof(cmd_line + 3);
+        foc_set_pos_kp(value);
+        serial_print_fixed3("kp", value);
+        return;
+    }
+    if (strncmp(cmd_line, "kd:", 3) == 0) {
+        float value = (float)atof(cmd_line + 3);
+        foc_set_pos_kd(value);
+        serial_print_fixed3("kd", value);
+        return;
+    }
+    if (strncmp(cmd_line, "ki:", 3) == 0) {
+        float value = (float)atof(cmd_line + 3);
+        foc_set_pos_ki(value);
+        serial_print_fixed3("ki", value);
+        return;
+    }
+    if (strncmp(cmd_line, "speed_kp:", 9) == 0) {
+        float value = (float)atof(cmd_line + 9);
+        foc_set_speed_kp(value);
+        serial_print_fixed3("speed_kp", value);
+        return;
+    }
+    if (strncmp(cmd_line, "speed_ki:", 9) == 0) {
+        float value = (float)atof(cmd_line + 9);
+        foc_set_speed_ki(value);
+        serial_print_fixed3("speed_ki", value);
+        return;
+    }
+    if (strncmp(cmd_line, "speed_ramp:", 11) == 0) {
+        float value = (float)atof(cmd_line + 11);
+        foc_set_speed_ramp(value);
+        serial_print_fixed3("speed_ramp", value);
+        return;
+    }
+    if (strncmp(cmd_line, "speed:", 6) == 0) {
+        foc_set_speed_ref((float)atof(cmd_line + 6));
+        foc_speed_enable(1U);
+        serial_print_fixed3("speed", foc_get_speed_ref());
+        return;
+    }
+    if (strncmp(cmd_line, "pos:", 4) == 0) {
+        float value = (float)atof(cmd_line + 4);
+        foc_set_target(value);
+        foc_pos_enable(1U);
+        serial_print_fixed3("pos", value);
+        return;
+    }
+    if (strncmp(cmd_line, "iq:", 3) == 0) {
+        foc_set_iq_ref((float)atof(cmd_line + 3));
+        serial_print_fixed3("iq", foc_get_iq_ref());
+        return;
+    }
+    if (strncmp(cmd_line, "cog_gain:", 9) == 0) {
+        float value = (float)atof(cmd_line + 9);
+        foc_cog_set_gain(value);
+        serial_print_fixed3("cog_gain", value);
+        return;
+    }
 
     /* 分割命令和参数 */
     char *argv[MAX_ARGS] = {NULL, NULL, NULL};
@@ -177,18 +281,28 @@ static void serial_execute(char *cmd_line)
         openloop_calib_offset();
         motor_running = 0;
 
+    } else if (strcmp(cmd, "off") == 0) {
+        printf("foc offset=%d deg\r\n", (int)foc_get_encoder_offset_deg());
+    } else if (strncmp(cmd_line, "off:", 4) == 0) {
+        float deg = (float)atof(cmd_line + 4);
+        foc_set_encoder_offset_deg(deg);
+        printf("foc offset=%d deg\r\n", (int)deg);
+
     } else if (strcmp(cmd, "pos") == 0) {
         /* pos on/off → 位置模式, pos <deg> → 设目标 */
         if (argc >= 2 && strcmp(argv[1], "on") == 0) {
             foc_pos_enable(1);
+            serial_switch_flags |= SERIAL_SWITCH_POSITION;
             printf("pos mode on\r\n");
         } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
             foc_pos_enable(0);
+            serial_switch_flags &= ~SERIAL_SWITCH_POSITION;
             printf("pos mode off\r\n");
         } else if (argc >= 2) {
             float deg = (float)atof(argv[1]);
             foc_set_target(deg);
             foc_pos_enable(1);
+            serial_switch_flags |= SERIAL_SWITCH_POSITION;
             printf("pos target=%d deg\r\n", (int)deg);
         } else {
             printf("pos=%d deg  usage: pos on|off | pos <deg> | pos_kp <val>\r\n",
@@ -206,6 +320,10 @@ static void serial_execute(char *cmd_line)
     } else if (strcmp(cmd, "pos_ki") == 0) {
         if (argc >= 2) foc_set_pos_ki((float)atof(argv[1]));
         printf("pos_ki set\r\n");
+
+    } else if (strcmp(cmd, "pos_vmax") == 0) {
+        if (argc >= 2) foc_set_pos_vmax((float)atof(argv[1]));
+        serial_print_fixed3("pos_vmax", foc_get_pos_vmax());
 
     } else if (strcmp(cmd, "test_theta") == 0) {
         /* 固定电角度测试: test_theta 90 → θ=90°, test_theta -1 → 退出 */
@@ -225,9 +343,11 @@ static void serial_execute(char *cmd_line)
         if (argc >= 2 && strcmp(argv[1], "on") == 0) {
             foc_start();
             motor_running = 1;
+            serial_switch_flags |= SERIAL_SWITCH_FOC;
         } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
             foc_stop();
             motor_running = 0;
+            serial_switch_flags &= ~SERIAL_SWITCH_FOC;
         } else {
             printf("usage: foc on|off\r\n");
         }
@@ -252,80 +372,59 @@ static void serial_execute(char *cmd_line)
         foc_set_current_ki(ki);
         printf("Ki_i=%d\r\n", (int)(ki * 1000.0f));
 
-    } else if (strcmp(cmd, "pid") == 0) {
+    } else if (strcmp(cmd, "pid") == 0 || strcmp(cmd, "current_pid") == 0) {
         if (argc >= 3) {
             float kp = (float)atof(argv[1]);
             float ki = (float)atof(argv[2]);
             foc_set_current_kp(kp);
             foc_set_current_ki(ki);
-            printf("pid: Kp=%d Ki=%d\r\n",
+            printf("current_kp=%d current_ki=%d\r\n",
                    (int)(kp * 1000.0f), (int)(ki * 1000.0f));
         } else {
             float kp, ki;
             foc_get_current_pi(&kp, &ki);
-            printf("pid current: Kp=%d Ki=%d\r\n",
+            printf("current_kp=%d current_ki=%d\r\n",
                    (int)(kp * 1000.0f), (int)(ki * 1000.0f));
-            printf("usage: pid <Kp> <Ki>\r\n");
+            printf("usage: current_pid <Kp> <Ki>\r\n");
         }
 
     } else if (strcmp(cmd, "speed") == 0) {
         /* speed on/off → 速度模式, speed <RPM> → 设目标转速 */
         if (argc >= 2 && strcmp(argv[1], "on") == 0) {
             foc_speed_enable(1);
+            serial_switch_flags |= SERIAL_SWITCH_SPEED;
             printf("speed mode on, ref=%d RPM\r\n", (int)foc_get_speed_ref());
         } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
             foc_speed_enable(0);
+            serial_switch_flags &= ~SERIAL_SWITCH_SPEED;
             printf("speed mode off\r\n");
         } else if (argc >= 2) {
             float rpm = (float)atof(argv[1]);
             foc_set_speed_ref(rpm);
             foc_speed_enable(1);
+            serial_switch_flags |= SERIAL_SWITCH_SPEED;
             printf("speed ref=%d RPM\r\n", (int)rpm);
         } else {
             float kp, ki;
             foc_get_speed_pi(&kp, &ki);
-            printf("speed: ref=%d RPM est=%d RPM Kp=%.3f Ki=%.3f  usage: speed on|off|<RPM>\r\n",
-                   (int)foc_get_speed_ref(), (int)foc_get_speed_est(),
-                   (double)kp, (double)ki);
+            printf("speed: ref=%d RPM est=%d RPM\r\n",
+                   (int)foc_get_speed_ref(), (int)foc_get_speed_est());
+            serial_print_fixed3("speed_kp", kp);
+            serial_print_fixed3("speed_ki", ki);
+            serial_print_fixed3("speed_ramp", foc_get_speed_ramp());
         }
 
     } else if (strcmp(cmd, "speed_kp") == 0) {
         if (argc >= 2) foc_set_speed_kp((float)atof(argv[1]));
         float kp, ki;
         foc_get_speed_pi(&kp, &ki);
-        printf("speed Kp=%.3f Ki=%.3f\r\n", (double)kp, (double)ki);
+        serial_print_fixed3("speed_kp", kp);
 
     } else if (strcmp(cmd, "speed_ki") == 0) {
         if (argc >= 2) foc_set_speed_ki((float)atof(argv[1]));
         float kp, ki;
         foc_get_speed_pi(&kp, &ki);
-        printf("speed Kp=%.3f Ki=%.3f\r\n", (double)kp, (double)ki);
-
-    } else if (strcmp(cmd, "ff") == 0) {
-        /* ff <A> — 摩擦前馈电流 (破静摩擦, 默认 0.3) */
-        if (argc >= 2) foc_set_friction_ff((float)atof(argv[1]));
-        printf("friction ff=%d mA\r\n", (int)(foc_get_friction_ff() * 1000.0f));
-
-    } else if (strcmp(cmd, "cog_cal") == 0) {
-        /* cog_cal [rpm] [revs] — 齿槽转矩标定 (电机需可自由旋转) */
-        float rpm = (argc >= 2) ? (float)atof(argv[1]) : COG_CAL_DEFAULT_RPM;
-        uint32_t revs = (argc >= 3) ? (uint32_t)atoi(argv[2])
-                                    : (uint32_t)COG_CAL_DEFAULT_REVS;
-        if (rpm < 20.0f)  rpm = 20.0f;
-        if (rpm > 200.0f) rpm = 200.0f;
-        if (revs < 5)   revs = 5;
-        if (revs > 50)  revs = 50;
-        printf("cog calib: %d RPM x %d revs...\r\n", (int)rpm, (int)revs);
-        cog_calib_start(rpm, revs);
-
-    } else if (strcmp(cmd, "cog") == 0) {
-        /* cog [on|off] — 齿槽前馈开关 / 标定进度查询 */
-        if (argc >= 2 && strcmp(argv[1], "on") == 0) {
-            cog_set_enabled(1);
-        } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
-            cog_set_enabled(0);
-        }
-        cog_print_status();
+        serial_print_fixed3("speed_ki", ki);
 
     } else if (strcmp(cmd, "speed_pid") == 0) {
         if (argc >= 3) {
@@ -334,7 +433,86 @@ static void serial_execute(char *cmd_line)
         }
         float kp, ki;
         foc_get_speed_pi(&kp, &ki);
-        printf("speed pid: Kp=%.3f Ki=%.3f\r\n", (double)kp, (double)ki);
+        serial_print_fixed3("speed_kp", kp);
+        serial_print_fixed3("speed_ki", ki);
+
+    } else if (strcmp(cmd, "cog") == 0) {
+        /* cog on|off|dump | cog <idx> <val> */
+        if (argc >= 2 && strcmp(argv[1], "on") == 0) {
+            foc_cog_enable(1);
+            printf("cog on gain=%d\r\n", (int)(foc_cog_get_gain() * 1000.0f));
+        } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+            foc_cog_enable(0);
+            printf("cog off\r\n");
+        } else if (argc >= 2 && strcmp(argv[1], "dump") == 0) {
+            uint16_t n = foc_cog_lut_size();
+            uint16_t i;
+            printf("cog en=%u gain=%d n=%u\r\n",
+                   (unsigned)foc_cog_is_enabled(),
+                   (int)(foc_cog_get_gain() * 1000.0f), (unsigned)n);
+            for (i = 0; i < n; ++i) {
+                printf("%d ", (int)(foc_cog_get_point(i) * 100000.0f));
+            }
+            printf("\r\n");
+        } else if (argc >= 3) {
+            uint16_t idx = (uint16_t)atoi(argv[1]);
+            float val = (float)atof(argv[2]);
+            foc_cog_set_point(idx, val);
+            printf("cog[%u]=%d\r\n", (unsigned)idx, (int)(val * 100000.0f));
+        } else {
+            printf("cog en=%u gain=%d\r\n",
+                   (unsigned)foc_cog_is_enabled(),
+                   (int)(foc_cog_get_gain() * 1000.0f));
+        }
+
+    } else if (strcmp(cmd, "enc_cal") == 0) {
+        /* enc_cal on|off|reset|dump */
+        if (argc >= 2 && strcmp(argv[1], "on") == 0) {
+            enc_cal_reset();
+            enc_cal_enable(1);
+            printf("enc_cal on\r\n");
+        } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+            enc_cal_enable(0);
+            printf("enc_cal off\r\n");
+        } else if (argc >= 2 && strcmp(argv[1], "reset") == 0) {
+            enc_cal_reset();
+            printf("enc_cal reset\r\n");
+        } else if (argc >= 2 && strcmp(argv[1], "dump") == 0) {
+            uint16_t i;
+            printf("enc_cal n=%u\r\n", (unsigned)ENC_CAL_BINS);
+            for (i = 0; i < ENC_CAL_BINS; ++i) {
+                printf("%ld,%lu ", (long)enc_cal_get_sum(i),
+                       (unsigned long)enc_cal_get_cnt(i));
+            }
+            printf("\r\n");
+        } else {
+            printf("usage: enc_cal on|off|reset|dump\r\n");
+        }
+
+    } else if (strcmp(cmd, "enc_corr") == 0) {
+        /* enc_corr on|off|dump | enc_corr <idx> <deg> */
+        if (argc >= 2 && strcmp(argv[1], "on") == 0) {
+            enc_corr_enable(1);
+            printf("enc_corr on\r\n");
+        } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+            enc_corr_enable(0);
+            printf("enc_corr off\r\n");
+        } else if (argc >= 2 && strcmp(argv[1], "dump") == 0) {
+            uint16_t i;
+            printf("enc_corr en=%u n=%u\r\n",
+                   (unsigned)enc_corr_is_enabled(), (unsigned)ENC_CAL_BINS);
+            for (i = 0; i < ENC_CAL_BINS; ++i) {
+                printf("%d ", (int)(enc_corr_get(i) * 100000.0f));
+            }
+            printf("\r\n");
+        } else if (argc >= 3) {
+            uint16_t idx = (uint16_t)atoi(argv[1]);
+            float deg = (float)atof(argv[2]);
+            enc_corr_set(idx, deg);
+            printf("enc_corr[%u]=%d\r\n", (unsigned)idx, (int)(deg * 100000.0f));
+        } else {
+            printf("enc_corr en=%u\r\n", (unsigned)enc_corr_is_enabled());
+        }
 
     } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "info") == 0) {
         if (foc_is_enabled()) {
@@ -356,12 +534,13 @@ static void serial_execute(char *cmd_line)
         }
 
     } else if (strcmp(cmd, "trace") == 0) {
-        extern uint8_t g_trace_enabled;
         if (argc >= 2 && strcmp(argv[1], "on") == 0) {
             g_trace_enabled = 1;
+            serial_switch_flags |= SERIAL_SWITCH_TRACE;
             printf("trace on\r\n");
         } else if (argc >= 2 && strcmp(argv[1], "off") == 0) {
             g_trace_enabled = 0;
+            serial_switch_flags &= ~SERIAL_SWITCH_TRACE;
             printf("trace off\r\n");
         } else {
             printf("usage: trace on|off\r\n");
@@ -383,7 +562,7 @@ static void serial_execute(char *cmd_line)
 
     } else {
         printf("unknown: %s\r\n", cmd);
-        printf("cmds: start/stop/f/v/align/offset/foc/torque/speed/speed_kp/speed_ki/mode/pid/pos/pos_kp/pos_kd/pos_ki/trace/diag/?\r\n");
+        printf("cmds: sw:hex kp:value kd:value ki:value speed_kp:value speed_ki:value speed_ramp:value speed:value pos:value iq:value cog_gain:value off:deg start/stop/f/v/align/offset/off/foc/speed/pos/cog/enc_cal/enc_corr/test_theta/trace/diag/?\r\n");
     }
 }
 
@@ -400,6 +579,7 @@ void serial_init(void)
     rx_tail  = 0;
     line_idx = 0;
     motor_running = 0;
+    serial_switch_flags = g_trace_enabled ? SERIAL_SWITCH_TRACE : 0U;
 
     /* 启动单字节中断接收 */
     HAL_UART_Receive_IT(&huart1, &rx_ring[rx_head], 1);
@@ -413,8 +593,6 @@ void serial_init(void)
 void serial_poll(void)
 {
     char ch;
-
-    cog_calib_notify();   /* 齿槽标定完成时打印摘要 */
 
     while (ring_getchar(&ch)) {
         /* 忽略回车, 换行触发命令执行 */
@@ -449,4 +627,3 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         HAL_UART_Receive_IT(&huart1, &rx_ring[rx_head], 1);
     }
 }
-

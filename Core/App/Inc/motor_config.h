@@ -38,7 +38,7 @@ extern "C" {
 /* -------------------------------------------------------------------------- */
 
 #define MOTOR_PWM_FREQ         20000.0f   /**< PWM / 电流环频率 (Hz)                  */
-#define MOTOR_POLE_PAIRS       7          /**< 极对数                                  */
+#define MOTOR_POLE_PAIRS       11         /**< 极对数 (22 极 → 11 极对, 实测)          */
 
 /* -------------------------------------------------------------------------- */
 /*  调试 Trace (FOC & 开环共享, CSV 格式)                                        */
@@ -46,6 +46,19 @@ extern "C" {
 
 #define TRACE_DIV                100      /**< 20kHz/100=200Hz 采样率 (越小越快, 需≤ UART带宽) */
 #define TRACE_ENABLE_DEFAULT     1        /**< 上电默认开启 trace                            */
+
+/* Trace 输出字段: 改为 0 或直接注释即可减少发送项; 修改后需重新烧录. */
+#define TRACE_SEND_IQ_REF        1
+#define TRACE_SEND_IQ            1
+#define TRACE_SEND_ID            1
+#define TRACE_SEND_VD            0
+#define TRACE_SEND_VQ            0
+#define TRACE_SEND_THETA         1
+#define TRACE_SEND_IA            0
+#define TRACE_SEND_IB            0
+#define TRACE_SEND_POS           1
+#define TRACE_SEND_SPEED_REF     1
+#define TRACE_SEND_SPEED_EST     1
 
 /* -------------------------------------------------------------------------- */
 /*  电流采样参数                                                                */
@@ -55,6 +68,10 @@ extern "C" {
 #define CURR_SENSE_ADC_RESOLUTION   4096.0f    /**< 12-bit 量程                   */
 #define CURR_SENSE_SHUNT_RESISTANCE 0.002f     /**< 采样电阻 2mΩ                  */
 #define CURR_SENSE_OPAMP_GAIN       50.0f      /**< 运放增益 100k/2k = 50         */
+
+/* 电流反馈一阶 IIR 系数 (0~1): 抑制 PWM 噪声, 代价是相位延迟.
+ * 0.35 → 等效极点约 1.4kHz, 对 400Hz 电流环仅约 16° 滞后. */
+#define FOC_CURR_LPF_ALPHA          0.35f
 
 #ifdef __cplusplus
 }

@@ -15,12 +15,12 @@ extern "C" {
 #define CURR_SENSE_OFFSET_B  2022   /* Ib: 从 30Hz trace 数据反推 */
 #define CURR_SENSE_OFFSET_C  2052   /* Ic: 从 30Hz trace 数据反推 */
 
-/* ISR 可直接访问的 ADC 缓冲区 (JEOC 回调写入, foc_isr 读取) */
+/* ISR 可直接访问的 ADC 缓冲区 (JEOS 回调写入, foc_isr 读取) */
 extern uint16_t adc_curr_buf[3];
 
 /**
  * \brief           初始化电流采样模块
- * \note            启动 ADC1 注入组 + JEOC 中断 (由 HRTIM ADC_TRG2 触发).
+ * \note            启动 ADC1 注入组 + JEOS 中断 (由 HRTIM ADC_TRG2 触发).
  *                  必须在 MX_ADC1_Init() 和 MX_HRTIM1_Init() 之后调用.
  */
 void curr_sense_init(void);

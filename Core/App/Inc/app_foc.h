@@ -17,8 +17,8 @@ extern "C" {
 
 /* ---- 默认 PI 参数 ---- */
 
-#define FOC_DEFAULT_KP   0.44f     /**< 电流环 Kp (归一化 V/A), 相值 R=5.12Ω L=0.948mH @400Hz */
-#define FOC_DEFAULT_KI   2385.0f   /**< 电流环 Ki (归一化 V/A/s) */
+#define FOC_DEFAULT_KP   0.22f     /**< 电流环 Kp (归一化 V/A), 相值 R=5.12Ω L=0.948mH @400Hz, Vdc=24V */
+#define FOC_DEFAULT_KI   1193.0f   /**< 电流环 Ki (归一化 V/A/s) */
 #define FOC_IQ_MAX       1.0f     /**< Iq 限幅 (A)                 */
 #define FOC_V_MAX        0.95f    /**< 电压输出限幅 (归一化)       */
 
@@ -32,13 +32,13 @@ extern "C" {
 /* ---- 速度环 ---- */
 
 #define FOC_SPEED_DEFAULT_KP     0.004f  /**< 速度环 Kp (A/RPM)              */
-#define FOC_SPEED_DEFAULT_KI     0.03f   /**< 速度环 Ki (A/RPM/s)           */
+#define FOC_SPEED_DEFAULT_KI     0.02f   /**< 速度环 Ki (A/RPM/s)           */
 #define FOC_SPEED_DEFAULT_RAMP   1000.0f /**< 速度参考斜坡 (RPM/s, 0=无限)   */
 #define FOC_SPEED_LOOP_DIV       20      /**< 速度环降频: 20kHz/20=1kHz     */
 #define FOC_SPEED_WIN_SLOW       200     /**< 低速估算窗口 (ISR 数, 200=10ms) */
 #define FOC_SPEED_SLOW_WIN_RPM   0.0f   /**< 低于此值使用长窗口 (0 = 禁用长窗口, 低速长窗口会造成极限环) */
 #define FOC_SPEED_FILTER_ALPHA   0.1f    /**< 速度估算 EMA 滤波系数 (0~1)   */
-#define FOC_SPEED_MAX_RPM        10000.0f /**< 速度限幅 (机械 RPM)           */
+#define FOC_SPEED_MAX_RPM        2000.0f /**< 速度限幅 (机械 RPM)           */
 
 /* ---- 编码器 ---- */
 

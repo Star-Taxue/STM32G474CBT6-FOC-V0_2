@@ -34,10 +34,11 @@
             "preLaunchTask": "build"
         },
         {
-            // 原 ST-Link 配置保留: 使用 STM32Cube 扩展自带的 ST-Link GDB Server.
+            // 备用配置: 仅在改用 ST-Link 探针时使用.
+            // 当前硬件是 CMSIS-DAP(Sipeed RV CMSIS-DAP), 用上面那条 "DAPLink (OpenOCD)".
             "type": "stlinkgdbtarget",
             "request": "launch",
-            "name": "STM32Cube: Launch ST-Link GDB Server",
+            "name": "STM32Cube: ST-Link (需 ST-Link 探针, 当前请用上面那条)",
             "origin": "snippet",
             "cwd": "${workspaceFolder}",
             "preBuild": "${command:st-stm32-ide-debug-launch.build}",
